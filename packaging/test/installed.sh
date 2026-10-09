@@ -33,7 +33,13 @@ sudo systemctl is-active --quiet tiphys.service || fail "the service is not runn
 ok "installed, and the service is running"
 
 [ "$(sudo stat -c '%U %a' "$state")" = "tiphysd 700" ] || fail "$state is not the daemon's alone"
-sudo visudo --check --quiet || fail "the sudoers files do not check"
+[ "$(sudo stat -c '%U %a' /etc/sudoers.d/tiphys)" = "root 440" ] || fail "the sudoers file is not root's, read-only"
+sudo visudo --check --file /etc/sudoers.d/tiphys || fail "the sudoers file Tiphys wrote does not check"
+# The machine's other sudoers files are its own business; what they say is
+# shown, in case one of them is why something below fails.
+sudo visudo --check || say "note: this machine's sudoers files as a whole do not check cleanly"
+sudo -u tiphysd sudo -n -l -U tiphysd >/dev/null 2>&1 || true
+sudo -l -U tiphysd | grep -q "tiphys worker" || fail "sudo does not list the worker rule for the daemon's user"
 if sudo -u tiphys ls "$state" >/dev/null 2>&1; then
     fail "the user the agent acts as can list the state directory"
 fi
