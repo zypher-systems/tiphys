@@ -76,6 +76,10 @@ enum Command {
     },
     /// List sessions, newest first.
     Sessions,
+    /// Act for the daemon as the user this is started as. The daemon starts
+    /// this itself; it is not for running by hand.
+    #[command(hide = true)]
+    Worker,
     /// Show what today and this month have cost.
     Spend,
 }
@@ -108,6 +112,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    // A worker has no state directory of its own; it is told the daemon's.
+    if matches!(cli.command, Some(Command::Worker)) {
+        return worker();
+    }
     let home = config::home_dir()?;
     if let Some(prompt) = cli.prompt {
         let run = oneshot::Run {
@@ -137,6 +145,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Some(Command::Doctor { live }) => return doctor(&home, live),
         Some(Command::Log { count, what }) => print_log(&home, count, what)?,
         Some(Command::Sessions) => print_sessions(&home)?,
+        Some(Command::Worker) => {}
         Some(Command::Spend) => print_spend(&home)?,
         // With nothing asked for, the app: as a client of the daemon if there
         // is one, and by itself if there is not.
@@ -177,6 +186,20 @@ fn daemon_status(home: &Path) -> Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+fn worker() -> Result<ExitCode> {
+    let home = config::user_home()?;
+    // Commands start from the worker's own home, wherever the daemon was.
+    std::env::set_current_dir(&home).map_err(|e| Error::Io(format!("{}: {e}", home.display())))?;
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
+    runtime.block_on(tiphys_core::worker::serve(
+        tokio::io::BufReader::new(tokio::io::stdin()),
+        tokio::io::stdout(),
+        home,
+    ))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn doctor(home: &Path, live: bool) -> Result<ExitCode> {

@@ -2,6 +2,26 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: Tiphys thinks as one user and acts as another
+- **By:** the owner, choosing among three ways to protect the key store.
+- **Decision:**
+  - The daemon runs as one user and holds the keys, the sessions and the action log. Every action on the machine, file tools as well as commands, is planned and run by a worker process running as a second user.
+  - The daemon starts the worker with a command from `[daemon] worker`. Installed, that is `sudo -n -H -u tiphys tiphys worker`, allowed by one sudoers line. With no command configured there is no worker and Tiphys acts as itself.
+  - The worker plans as well as runs. The daemon judges, asks, and records.
+  - The two talk over the worker's standard input and output. A cancelled turn tells the worker to stop the call; the worker's input closing ends the worker, after it has stopped what it was running.
+- **Chosen vs rejected:**
+  - Rejected one user with the rules as the only protection: a command the rules fail to recognise could read the key.
+  - Rejected a kernel sandbox around commands (Landlock): it needs no second user, but it switches off `sudo` for every command, so the agent could never be given root, and file tools would stay outside it.
+  - Rejected running only commands as the second user and leaving file tools in the daemon: files made by the two would have different owners, and every `chmod`, `git` and `ssh` would trip over it.
+  - Rejected planning in the daemon: a plan reads the file it is about to change, and the daemon's user should not need to read the agent's files.
+- **Why:** The rules about commands read their form and can be wrong. Which user can open a file is not a matter of reading anything.
+- **Where:** `tiphys-core/src/runner.rs`, `worker.rs`, `agent.rs` (`deal_with`), `start.rs`; the `worker` command in `tiphys-cli`.
+- **Residual risk:**
+  - The worker computes the verdict the daemon acts on. A command cannot alter the worker that started it, since Ubuntu does not let a process trace its parent, but the verdict is not computed where the keys are.
+  - The daemon's user must be able to run that one command through `sudo` with no password, so the unit cannot set `NoNewPrivileges`.
+  - A worker killed outright leaves what it was running behind; only a worker that sees its input close cleans up.
+  - Run by hand, there is one user and none of this applies.
+
 ### 2026-10-09: The daemon catches a client up from inside the host, with no numbers on the wire
 - **By:** design, while building the daemon.
 - **Decision:**

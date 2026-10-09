@@ -161,6 +161,26 @@ impl Host {
         inbox: &mut UnboundedReceiver<Input>,
         waiting: &mut VecDeque<Input>,
     ) -> bool {
+        // A worker that died takes its session's runner with it. The session
+        // is opened again, which starts another.
+        if let Some(agent) = &self.agent
+            && !agent.runner.is_alive()
+        {
+            let session = agent.session.meta().id.clone();
+            self.agent = None;
+            match self.start(Resume::Id(session)).await {
+                Ok(agent) => self.agent = Some(agent),
+                Err(e) => {
+                    self.reply(
+                        client,
+                        &Event::Failed {
+                            message: e.to_string(),
+                        },
+                    );
+                    return true;
+                }
+            }
+        }
         if self.agent.is_none() {
             match self.start(Resume::New).await {
                 Ok(agent) => self.agent = Some(agent),

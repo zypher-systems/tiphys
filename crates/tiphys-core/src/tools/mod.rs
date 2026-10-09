@@ -62,7 +62,7 @@ impl ToolCtx {
 }
 
 /// What a tool handed back.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Output {
     pub text: String,
     /// Whether it did what was asked. A failure still goes to the model, as

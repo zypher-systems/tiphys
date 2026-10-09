@@ -98,6 +98,10 @@ pub struct Daemon {
     /// daemon runs as and root. Anyone else who reaches the socket is turned
     /// away.
     pub owners: Vec<u32>,
+    /// The command that starts the worker which acts for the agent as
+    /// another user: a program and its arguments. Empty means there is no
+    /// worker, and the agent acts as the user Tiphys itself runs as.
+    pub worker: Vec<String>,
 }
 
 /// What asks before it runs.

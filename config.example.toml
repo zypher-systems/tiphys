@@ -59,3 +59,8 @@
 # and root. `tiphys daemon install --owner <name>` fills this in.
 # [daemon]
 # owners = [1000]
+
+# The command that starts the worker, which acts for the agent as another
+# user. Installed, it is set for you. Left out, there is no worker, and
+# Tiphys acts as the user it runs as.
+# worker = ["sudo", "-n", "-H", "-u", "tiphys", "/usr/local/bin/tiphys", "worker"]

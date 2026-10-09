@@ -23,12 +23,14 @@ pub mod log;
 pub mod policy;
 pub mod prompt;
 pub mod proto;
+pub mod runner;
 pub mod session;
 pub mod settings;
 pub mod spend;
 pub mod start;
 pub mod tools;
 pub mod wire;
+pub mod worker;
 
 pub use error::{Error, Result};
 

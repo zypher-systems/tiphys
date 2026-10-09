@@ -15,10 +15,12 @@ use crate::approval::{Approver, DenyAll};
 use crate::cancel::Cancel;
 use crate::config::{self, Config, Connection, OnChange};
 use crate::llm::{ChatConnect, Connect, Provider, catalog};
-use crate::prompt::{Machine, system_prompt};
+use crate::prompt::system_prompt;
+use crate::runner::{LocalRunner, Runner};
 use crate::session::{self, Opening, Session};
 use crate::spend::PriceBook;
 use crate::tools::{Registry, ToolCtx};
+use crate::worker::WorkerRunner;
 use crate::{Error, Result, keys};
 
 /// Which session a run uses.
@@ -59,12 +61,20 @@ pub async fn agent_for(
     approver: Arc<dyn Approver>,
 ) -> Result<Agent> {
     let config = config::load_at(home)?;
-    let ctx = ToolCtx {
-        state: home.to_path_buf(),
-        cwd: user_home.to_path_buf(),
-        home: user_home.to_path_buf(),
+    // The agent acts through a worker running as another user where one is
+    // configured, and as the user Tiphys itself runs as where none is.
+    let runner: Arc<dyn Runner> = if config.daemon.worker.is_empty() {
+        Arc::new(LocalRunner::new(
+            Registry::builtin(),
+            ToolCtx {
+                state: home.to_path_buf(),
+                cwd: user_home.to_path_buf(),
+                home: user_home.to_path_buf(),
+            },
+        ))
+    } else {
+        Arc::new(WorkerRunner::spawn(&config.daemon.worker, home).await?)
     };
-    let tools = Registry::builtin();
 
     let resumed = match &start.resume {
         Resume::New => None,
@@ -92,15 +102,14 @@ pub async fn agent_for(
                         "connection `{name}` has no model chosen; run `tiphys` and pick one in the app"
                     ))
                 })?;
-            let machine = Machine::detect(&ctx.home);
             Session::create(
                 home,
                 Opening {
                     connection: name.to_string(),
                     model,
                     audience: start.audience.clone(),
-                    system: system_prompt(&machine, Utc::now()),
-                    tools: tools.specs(),
+                    system: system_prompt(&runner.machine(), Utc::now()),
+                    tools: Registry::builtin().specs(),
                 },
             )?
         }
@@ -119,8 +128,8 @@ pub async fn agent_for(
     Ok(Agent {
         provider,
         session,
-        tools,
-        ctx,
+        runner,
+        home: home.to_path_buf(),
         prices,
         local: connection.local,
         limits: config.limits,

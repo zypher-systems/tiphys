@@ -31,7 +31,7 @@ pub enum Class {
 }
 
 /// What the rules say about one action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
     pub class: Class,
     /// Why it asks or is refused, for the owner. Empty when it simply runs.

@@ -261,6 +261,33 @@ it. Nothing sends one the other way.
 
 ---
 
+### 9.1 Two users
+
+An installed Tiphys is two users.
+
+| User | Runs | Can read |
+| --- | --- | --- |
+| `tiphysd` | The daemon: the model calls, the sessions, the action log, the key store | Its own state directory, which nobody else can enter |
+| `tiphys` | The worker: every file read, every edit, every command | Its own home, and whatever any ordinary user can |
+
+The daemon starts the worker with one command, `sudo -n -H -u tiphys /usr/local/bin/tiphys
+worker`, which a single sudoers line allows and nothing else. They talk over the worker's standard
+input and output. The worker plans each tool call as well as running it, since planning reads the
+files it is about; the daemon decides whether the call may run, asks the owner where it must, and
+keeps the record.
+
+A command the agent runs is the worker's user. The key store is out of its reach because the
+operating system says so, whatever the command is. The rules about the state directory stay, as a
+second line.
+
+When its input closes, the worker stops what it is running and ends. A worker that dies is replaced
+at the session's next turn.
+
+Run by hand, with no worker configured, Tiphys acts as the user it was started by, and the rules
+are the only protection the key store has.
+
+---
+
 ## 10. Milestones
 
 | M | Deliverable |

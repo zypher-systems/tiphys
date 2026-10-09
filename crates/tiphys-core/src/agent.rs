@@ -25,9 +25,10 @@ use crate::config::Limits;
 use crate::llm::{self, Delta, Message, Provider, Reply, ReplyBuilder, ToolCall};
 use crate::policy::Class;
 use crate::proto::{Event, StopReason};
+use crate::runner::{Planned, Runner};
 use crate::session::Session;
 use crate::spend::{self, Charge, PriceBook};
-use crate::tools::{Action, Output, Registry, ToolCtx};
+use crate::tools::Output;
 
 /// The same call with the same result this many times gets a note.
 const REPEAT_NUDGE: u32 = 3;
@@ -65,8 +66,10 @@ pub type Emit<'a> = &'a (dyn Fn(&Event) + Send + Sync);
 pub struct Agent {
     pub provider: Arc<dyn Provider>,
     pub session: Session,
-    pub tools: Registry,
-    pub ctx: ToolCtx,
+    /// Where the session's actions are planned and run.
+    pub runner: Arc<dyn Runner>,
+    /// The state directory.
+    pub home: std::path::PathBuf,
     pub prices: PriceBook,
     /// Whether the connection is on the owner's own hardware, and so free.
     pub local: bool,
@@ -238,7 +241,7 @@ impl Agent {
             usage: reply.usage,
             cost,
         };
-        spend::record(&self.ctx.state, &charge)?;
+        spend::record(&self.home, &charge)?;
         self.tell(
             emit,
             Event::Spend {
@@ -276,9 +279,9 @@ impl Agent {
     /// turn: the model is told why and carries on. Whatever happens to the
     /// call, it is written to the action log.
     async fn deal_with(&mut self, call: &ToolCall, emit: Emit<'_>) -> Result<Output> {
-        let planned = self.tools.plan(call, &self.ctx);
+        let planned = self.runner.plan(call).await;
         let (summary, reason) = match &planned {
-            Ok(planned) => (planned.action.summary(), planned.reason.clone()),
+            Ok(planned) => (planned.summary.clone(), planned.reason.clone()),
             Err(_) => (call.name.clone(), String::new()),
         };
         self.tell(
@@ -293,11 +296,13 @@ impl Agent {
         let (class, gate, output) = match planned {
             Err(message) => (None, Gate::Invalid, Output::error(message)),
             Ok(planned) => {
-                let verdict = planned.action.verdict();
-                let (gate, output) = self
-                    .judge_and_run(call, planned.action, &summary, &reason, emit)
-                    .await?;
-                (Some(verdict.class), gate, output)
+                let class = planned.verdict.class;
+                let (ticket, runner) = (planned.ticket, self.runner.clone());
+                let judged = self.judge_and_run(call, planned, emit).await;
+                // A plan that was not run is forgotten, whatever stopped it.
+                runner.discard(ticket);
+                let (gate, output) = judged?;
+                (Some(class), gate, output)
             }
         };
         let output = output.capped();
@@ -328,12 +333,16 @@ impl Agent {
     async fn judge_and_run(
         &mut self,
         call: &ToolCall,
-        action: Box<dyn Action>,
-        summary: &str,
-        reason: &str,
+        planned: Planned,
         emit: Emit<'_>,
     ) -> Result<(Gate, Output)> {
-        let verdict = action.verdict();
+        let Planned {
+            ticket,
+            verdict,
+            summary,
+            preview,
+            reason,
+        } = planned;
         let asks = match verdict.class {
             Class::Never => {
                 let refusal = format!(
@@ -358,11 +367,11 @@ impl Agent {
             let ask = Ask {
                 id: call.id.clone(),
                 tool: call.name.clone(),
-                summary: summary.to_string(),
-                reason: reason.to_string(),
+                summary,
+                reason,
                 why: verdict.why,
                 class: verdict.class,
-                preview: action.preview(),
+                preview,
             };
             self.tell(
                 emit,
@@ -403,7 +412,7 @@ impl Agent {
             gate = Gate::Approved;
         }
         let output = tokio::select! {
-            output = action.run(&self.ctx) => output,
+            output = self.runner.run(ticket) => output,
             () = cancel.cancelled() => Output::error("stopped by the owner before it finished"),
         };
         Ok((gate, output))
@@ -430,13 +439,17 @@ mod tests {
     use super::*;
     use crate::approval::DenyAll;
     use crate::llm::{DeltaStream, Model, ReplayProvider, Role, ToolCallPart};
+    use crate::runner::LocalRunner;
     use crate::session::Opening;
     use crate::spend::{Rates, Usage};
+    use crate::tools::{Registry, ToolCtx};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
     struct Fixture {
         _dir: tempfile::TempDir,
+        /// The home of the user the agent acts as.
+        user_home: std::path::PathBuf,
         agent: Agent,
         provider: Arc<ReplayProvider>,
         events: Arc<Mutex<Vec<Event>>>,
@@ -469,7 +482,7 @@ mod tests {
         }
 
         fn home(&self) -> std::path::PathBuf {
-            self.agent.ctx.home.clone()
+            self.user_home.clone()
         }
     }
 
@@ -512,12 +525,15 @@ mod tests {
             agent: Agent {
                 provider,
                 session,
-                tools,
-                ctx: ToolCtx {
-                    state,
-                    home: home.clone(),
-                    cwd: home,
-                },
+                runner: Arc::new(LocalRunner::new(
+                    tools,
+                    ToolCtx {
+                        state: state.clone(),
+                        home: home.clone(),
+                        cwd: home.clone(),
+                    },
+                )),
+                home: state,
                 prices,
                 local: false,
                 limits: Limits {
@@ -530,6 +546,7 @@ mod tests {
                 actions: ActionLog::at(&log_home),
             },
             provider: replay,
+            user_home: home,
             events: Arc::default(),
             _dir: dir,
         }
@@ -619,7 +636,7 @@ mod tests {
         );
 
         // 1M input at $1 and 0.5M output at $2.
-        let (today, _) = spend::totals(&f.agent.ctx.state).unwrap();
+        let (today, _) = spend::totals(&f.agent.home).unwrap();
         assert!((today.cost - 2.0).abs() < 1e-9 && today.calls == 1 && today.unpriced == 0);
 
         // The model was sent the session's frozen prompt and tools.
@@ -886,7 +903,7 @@ mod tests {
             ))
             .unwrap();
 
-        f.agent.session = Session::open(&f.agent.ctx.state, &id).unwrap();
+        f.agent.session = Session::open(&f.agent.home, &id).unwrap();
         let turn = f.turn("second").await;
         assert_eq!(turn.reason, StopReason::Completed);
 
@@ -1063,7 +1080,7 @@ mod tests {
         // Not even a willing owner is asked about what is never done.
         assert!(owner.asked.lock().unwrap().is_empty());
         assert!(results(&f)[0].starts_with("refused: this is inside Tiphys's own state directory"));
-        assert!(!f.agent.ctx.state.join("config.toml").exists());
+        assert!(!f.agent.home.join("config.toml").exists());
         assert_eq!(
             logged(&f),
             [
@@ -1099,7 +1116,7 @@ mod tests {
     async fn nothing_runs_when_its_record_cannot_be_kept() {
         let mut f = fixture(vec![writes("w1", "notes.txt"), says("never reached")]);
         // The action log's place is taken by a file.
-        std::fs::write(f.agent.ctx.state.join("log"), b"").unwrap();
+        std::fs::write(f.agent.home.join("log"), b"").unwrap();
         let turn = f.turn("keep a note").await;
 
         assert!(!f.home().join("notes.txt").exists());

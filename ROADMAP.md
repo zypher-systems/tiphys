@@ -81,8 +81,9 @@ install on.
 - [x] The daemon: `tiphys daemon run` behind a Unix socket, one host per audience, clients checked
       by who they are, a clean stop on SIGTERM. The app and `tiphys -p` are its clients when it is
       running, and run by themselves when it is not.
-- [ ] Actions run as a second user, so that a command the agent runs cannot read the key store or
-      the state. With it, the state directory moves out of the home the agent works in.
+- [x] A worker: the agent's actions, file tools and commands alike, are planned and run in a
+      `tiphys worker` process that the daemon starts with a configured command. Run by hand that
+      is the same user; installed, it is a second user who cannot read the keys or the state.
 - [ ] `tiphys daemon install`: the users, the unit, the directories, and the owner who may connect.
       A daily spending limit, on by default. A key read from the environment does not stay in it.
 - [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
