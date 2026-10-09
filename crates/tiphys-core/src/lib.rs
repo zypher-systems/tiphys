@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent;
+pub mod cancel;
 pub mod config;
 pub mod error;
 pub mod files;
@@ -12,8 +14,14 @@ pub mod jsonl;
 pub mod keys;
 pub mod llm;
 pub mod log;
+pub mod policy;
+pub mod prompt;
+pub mod proto;
+pub mod session;
 pub mod settings;
 pub mod spend;
+pub mod start;
+pub mod tools;
 
 pub use error::{Error, Result};
 

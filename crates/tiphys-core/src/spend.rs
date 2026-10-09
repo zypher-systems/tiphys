@@ -139,6 +139,9 @@ pub fn cost_of(reported: Option<f64>, rates: Option<Rates>, usage: Option<&Usage
     reported
         .filter(|cost| cost.is_finite() && *cost >= 0.0)
         .or_else(|| Some(rates?.cost(usage?)))
+        // To a billionth of a dollar, so the ledger holds 0.00112 and not
+        // 0.0011200000000000001.
+        .map(|cost| (cost * 1e9).round() / 1e9)
 }
 
 /// One line of the ledger.

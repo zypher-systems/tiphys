@@ -40,3 +40,10 @@
 # output = 15.0
 # cache_read = 0.3
 # cache_write = 3.75
+
+# The bounds on one turn. A turn that reaches the round limit stops and says
+# so; "continue" carries on. `max_tokens` caps a single reply and is left to
+# the provider when unset.
+# [limits]
+# rounds = 40
+# max_tokens = 8192

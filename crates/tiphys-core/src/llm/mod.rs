@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::spend::{Rates, Usage};
 use crate::{Error, Result};
 
+pub mod catalog;
 pub mod chat;
 mod replay;
 mod sse;

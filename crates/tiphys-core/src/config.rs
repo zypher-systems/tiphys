@@ -75,6 +75,27 @@ pub struct Config {
     /// The owner's prices by model id, in dollars per million tokens. They
     /// win over what a provider lists, and price a model that has no listing.
     pub pricing: BTreeMap<String, Rates>,
+    /// The bounds on one turn.
+    pub limits: Limits,
+}
+
+/// The bounds on one turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    /// Model calls in one turn. A turn that reaches this stops and says so.
+    pub rounds: u32,
+    /// The most a reply may be, in tokens. Unset leaves it to the provider.
+    pub max_tokens: Option<u32>,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            rounds: 40,
+            max_tokens: None,
+        }
+    }
 }
 
 /// One model endpoint.
@@ -123,6 +144,11 @@ impl Config {
                     "pricing for `{model}`: a rate must be a number that is not negative"
                 )));
             }
+        }
+        if self.limits.rounds == 0 || self.limits.max_tokens == Some(0) {
+            return Err(Error::Config(
+                "limits: rounds and max_tokens must be at least 1".into(),
+            ));
         }
         if let Some(name) = &self.default_connection
             && !self.connections.contains_key(name)
@@ -328,6 +354,7 @@ mod tests {
         let rates = config.pricing["vendor/model"];
         assert_eq!((rates.input, rates.output), (3.0, 15.0));
         assert_eq!((rates.cache_read, rates.cache_write), (Some(0.3), None));
+        assert_eq!(config.limits, Limits::default());
     }
 
     #[test]
@@ -378,6 +405,8 @@ mod tests {
                 "not negative",
             ),
             ("[pricing.m]\ninput = 1.0", "output"),
+            ("[limits]\nrounds = 0", "at least 1"),
+            ("[limits]\nturns = 3", "unknown field"),
             ("default_connection = ", "config.toml"),
         ];
         for (text, expected) in cases {
