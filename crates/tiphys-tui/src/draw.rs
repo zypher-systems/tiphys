@@ -331,7 +331,7 @@ fn transcript(chat: &Chat, width: usize) -> Vec<Line<'static>> {
             Item::Error(text) => push(&mut lines, text, "✗ ", "  ", bad()),
         }
     }
-    if !chat.streaming.is_empty() {
+    if !chat.streaming.trim().is_empty() {
         push(&mut lines, &chat.streaming, "", "", Style::new());
     }
     lines

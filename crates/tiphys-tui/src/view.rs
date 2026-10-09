@@ -383,6 +383,11 @@ impl Chat {
                 reason,
                 ..
             } => {
+                // A line break the model sent before its tool call is not the
+                // start of an answer.
+                if self.streaming.trim().is_empty() {
+                    self.streaming.clear();
+                }
                 self.activity = Activity::Tool(summary.clone());
                 self.items.push(Item::Tool {
                     id: id.clone(),
@@ -1050,6 +1055,48 @@ mod tests {
         assert!(!view.chat.busy && view.chat.streaming.is_empty());
         assert_eq!((view.chat.cost, view.chat.unpriced), (0.002, 1));
         assert_eq!(view.chat.activity, Activity::Idle);
+    }
+
+    #[test]
+    fn blank_text_before_a_tool_call_leaves_no_gap_in_the_conversation() {
+        let mut view = chatting();
+        apply(
+            &mut view,
+            &Event::UserMessage {
+                text: "look around".into(),
+            },
+        );
+        apply(
+            &mut view,
+            &Event::Text {
+                text: "\n\n".into(),
+            },
+        );
+        apply(
+            &mut view,
+            &Event::ToolStarted {
+                id: "a".into(),
+                tool: "shell".into(),
+                summary: "run: uptime".into(),
+                reason: String::new(),
+            },
+        );
+        assert!(view.chat.streaming.is_empty());
+        apply(
+            &mut view,
+            &Event::ToolFinished {
+                id: "a".into(),
+                ok: true,
+                output: String::new(),
+            },
+        );
+        apply(
+            &mut view,
+            &Event::Text {
+                text: "Up two days.".into(),
+            },
+        );
+        assert_eq!(view.chat.streaming, "Up two days.");
     }
 
     #[test]

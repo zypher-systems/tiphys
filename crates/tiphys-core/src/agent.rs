@@ -257,7 +257,9 @@ impl Agent {
         turn: &mut Turn,
     ) -> Result<()> {
         self.session.push(Message::assistant(text, calls))?;
-        if !text.is_empty() {
+        // Some models send a line break or two beside a tool call. That is
+        // kept as the model wrote it, but it is not something said.
+        if !text.trim().is_empty() {
             turn.text = text.to_string();
             self.tell(
                 emit,
@@ -669,6 +671,24 @@ mod tests {
             (Role::Tool, "hello from disk\n")
         );
         assert_eq!(last.tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[tokio::test]
+    async fn blank_text_beside_a_tool_call_is_kept_but_not_reported_as_said() {
+        let mut blank_then_call = vec![Delta::Text("\n\n".into())];
+        blank_then_call.extend(read_hello("call_1"));
+        let mut f = fixture(vec![blank_then_call, says("It says hello.")]);
+        let turn = f.turn("what is in hello.txt?").await;
+
+        assert_eq!(turn.text, "It says hello.");
+        let said = f
+            .kinds()
+            .iter()
+            .filter(|kind| *kind == "assistant_message")
+            .count();
+        assert_eq!(said, 1);
+        // The transcript holds what the model sent.
+        assert_eq!(f.agent.session.messages()[1].content, "\n\n");
     }
 
     #[tokio::test]

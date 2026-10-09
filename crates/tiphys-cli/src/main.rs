@@ -61,6 +61,9 @@ enum Command {
     },
     /// Show the action log: every tool call, and how it came to run or not.
     Log {
+        /// How many of the most recent entries to list.
+        #[arg(short = 'n', default_value_t = 20)]
+        count: usize,
         #[command(subcommand)]
         what: Option<LogCommand>,
     },
@@ -72,12 +75,6 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum LogCommand {
-    /// The most recent entries.
-    List {
-        /// How many to show.
-        #[arg(short = 'n', default_value_t = 20)]
-        count: usize,
-    },
     /// One entry in full.
     Show { seq: u64 },
     /// Check that no entry has been changed or removed.
@@ -110,9 +107,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     }
     match cli.command {
         Some(Command::Doctor { live }) => return doctor(&home, live),
-        Some(Command::Log { what }) => {
-            print_log(&home, what.unwrap_or(LogCommand::List { count: 20 }))?
-        }
+        Some(Command::Log { count, what }) => print_log(&home, count, what)?,
         Some(Command::Sessions) => print_sessions(&home)?,
         Some(Command::Spend) => print_spend(&home)?,
         // With nothing asked for, the app.
@@ -144,10 +139,10 @@ fn doctor(home: &Path, live: bool) -> Result<ExitCode> {
     })
 }
 
-fn print_log(home: &Path, what: LogCommand) -> Result<()> {
+fn print_log(home: &Path, count: usize, what: Option<LogCommand>) -> Result<()> {
     let log = ActionLog::at(home);
     match what {
-        LogCommand::List { count } => {
+        None => {
             let entries = log.entries()?;
             if entries.is_empty() {
                 println!("The action log is empty.");
@@ -157,7 +152,7 @@ fn print_log(home: &Path, what: LogCommand) -> Result<()> {
                 println!("{}", log_line(entry));
             }
         }
-        LogCommand::Show { seq } => {
+        Some(LogCommand::Show { seq }) => {
             let entries = log.entries()?;
             let entry = entries
                 .iter()
@@ -167,7 +162,7 @@ fn print_log(home: &Path, what: LogCommand) -> Result<()> {
                 .map_err(|e| Error::Io(format!("cannot show the entry: {e}")))?;
             println!("{json}");
         }
-        LogCommand::Verify => {
+        Some(LogCommand::Verify) => {
             let count = log.verify()?;
             println!(
                 "{count} entries, each following from the one before. Nothing has been changed or removed."

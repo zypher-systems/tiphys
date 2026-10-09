@@ -38,7 +38,7 @@ beyond the first, more than one owner.
 
 ## Now
 
-**M0: a first conversation.** Built, and waiting on one check that only the owner can make.
+**M0: a first conversation.** Built, and run by the owner against a real provider.
 
 - [x] Workspace, config, key store, crash-safe JSONL, CI.
 - [x] Provider layer: Chat Completions with streaming and tool calls, a replay provider, spend.
@@ -48,11 +48,14 @@ beyond the first, more than one owner.
 - [x] File actions: the path rules, approvals with a card in the app, `write_file`, `edit_file`,
       the action log and `tiphys log`.
 - [x] Commands: the `shell` tool with its Ubuntu rules, and `tiphys doctor`.
-- [ ] **A live round trip with a real provider.** Everything so far was driven against a scripted
-      local server. The owner adds a connection and its key in the app; the app then makes a real
-      tool call before it saves the connection. `tiphys doctor --live` repeats it.
+- [x] A live round trip with a real provider. On 2026-10-09 the owner set up an OpenRouter
+      connection in the app and asked for an overview of the machine: 12 tool calls over two
+      turns, two of them made in one reply, every call priced, three approvals asked and given,
+      and the action log verified afterwards.
+- [ ] The rest of the "done when" below, on the real connection: a file written on request, and a
+      `sudo` request that shows a card.
 - [ ] Captures of a real provider's streams in `crates/tiphys-core/fixtures/chat/`, in place of the
-      ones written by hand.
+      ones written by hand. Nothing records a stream yet.
 
 Done when: you run `tiphys`, add a connection and its key in the app, ask "how full is the root
 disk? write the answer to ~/disk.txt", and the file appears; a `sudo` request shows an approval
@@ -60,8 +63,9 @@ card; `tiphys log verify` passes.
 
 Known gaps in what is built:
 
-- The shell rules have met only the commands in their own tests. Real use will find commands that
-  ask and should not, and the reverse.
+- The shell rules have met their own tests and one real session. In that session 3 of 10 commands
+  asked: two `for` loops and a program not in the table. Real use will find commands that ask and
+  should not, and the reverse.
 - A command the agent runs is the same user as the agent, so the key store is protected from it by
   the rules alone. M1 gives it a boundary the operating system enforces.
 - There is no spending limit yet.
