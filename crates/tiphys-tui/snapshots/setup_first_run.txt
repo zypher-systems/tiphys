@@ -1,5 +1,5 @@
 
- Tiphys 0.1.0
+ Tiphys <version>
 
  Set up a connection
 

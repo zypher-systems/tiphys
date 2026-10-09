@@ -573,6 +573,12 @@ mod tests {
     /// `UPDATE_SNAPSHOTS=1` to keep what is drawn now.
     fn check(name: &str, view: &View) {
         let (screen, _) = render(view, 80, 20);
+        // A screen that shows the version is kept without it, so a release
+        // does not change what the screens are compared with.
+        let screen = screen.replace(
+            &format!("Tiphys {}", tiphys_core::VERSION),
+            "Tiphys <version>",
+        );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("snapshots")
             .join(format!("{name}.txt"));

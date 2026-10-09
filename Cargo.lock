@@ -1625,7 +1625,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tiphys-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "rustix 1.1.5",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "tiphys-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "tiphys-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "tiphys-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossterm",
  "ratatui",

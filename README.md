@@ -4,7 +4,7 @@ An **always-on agent for your server**. You install it on a machine of its own, 
 for you: it runs commands, checks on things, does scheduled jobs and reports back. You reach it from
 a terminal app on the server and from chat on your phone.
 
-> **Status: 0.1.0, early.** Tiphys runs as a service on an Ubuntu server and is reached from a
+> **Status: 0.1.1, early.** Tiphys runs as a service on an Ubuntu server and is reached from a
 > terminal app: it reads and changes files and runs commands, asks before anything that reaches
 > beyond its own home, and keeps a record of every action. Chat, scheduled jobs and memory are not
 > built yet. See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how
