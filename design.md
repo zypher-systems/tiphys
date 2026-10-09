@@ -219,8 +219,13 @@ boundary.
 
 A session is a directory of append-only files.
 
-- `transcript.jsonl` holds the messages. Compaction appends a marker that says which earlier
-  records the model no longer sees; nothing is rewritten, so the full history can always be read.
+- `transcript.jsonl` holds the messages. Nothing in it is rewritten, so the full history can
+  always be read.
+- When a conversation nears what the model can hold, about three quarters of its context window,
+  the oldest part is left out of what the model is sent, down to about half the window. Old tool
+  results go first, replaced by a line saying so; then whole turns, oldest first; then the older
+  tool results of a single over-long turn. A marker in the transcript says where the model's view
+  now starts. No model is asked to summarise: what the agent must not forget belongs in memory.
 - `events.jsonl` holds the durable events with sequence numbers. A client that reconnects asks for
   everything after the last number it saw.
 - Appends take a lock, are flushed to disk, and a torn last line is repaired on open.

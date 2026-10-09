@@ -38,7 +38,16 @@ beyond the first, more than one owner.
 
 ## Now
 
-Nothing is in progress. M0 and M1 are done and released; the last release is 0.1.1. M2 is next.
+**M2: Telegram.** Under way. M0 and M1 are done and released; the last release is 0.1.1.
+
+- [x] Compaction: before a conversation is more than the model can hold, its oldest part is left
+      out of what the model is sent: old tool results first, then whole turns. Nothing is deleted.
+- [ ] Telegram in the daemon: long polling, one conversation per chat, an allowlist, approvals as
+      buttons, `/new` and `/stop`.
+- [ ] Setup in the app: the bot token in a masked field, and pairing by sending the bot a message.
+
+Done when: a stranger gets nothing, you get an answer, a request that has to ask shows buttons, an
+unanswered one is denied after 300 seconds, and `/stop` and `/new` work.
 
 Found on the first installed server, and not yet dealt with:
 
@@ -49,11 +58,6 @@ Found on the first installed server, and not yet dealt with:
   programs ask, which is the commonest interruption so far.
 
 ## Next
-
-**M2: Telegram.** The adapter, an allowlist, approvals in chat, compaction. The bot token is entered
-in the app.
-Done when: a stranger gets nothing, you get a streamed answer, a system change shows buttons, an
-unanswered request is denied after 300 seconds, and `/stop` and `/new` work.
 
 **M3: memory and jobs.** Bounded memory scoped per chat. Scheduled jobs with delivery to your chat.
 Done when: "every day at 07:00 check disk and failed units, tell me only if something is wrong"

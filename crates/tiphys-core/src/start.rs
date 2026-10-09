@@ -124,6 +124,14 @@ pub async fn agent_for(
     let key = keys::resolve(home, &name, connection.env_key.as_deref())?;
     let provider = connect.provider(connection, key.as_ref())?;
     let prices = prices(home, &config, &name, provider.as_ref()).await;
+    // The model's context window, from the connection's kept model list.
+    let context_window = catalog::load(home, &name).and_then(|kept| {
+        let model = &session.meta().model;
+        kept.models
+            .iter()
+            .find(|listed| &listed.id == model)?
+            .context
+    });
 
     Ok(Agent {
         provider,
@@ -138,6 +146,7 @@ pub async fn agent_for(
         ask_before_change: config.approvals.change == OnChange::Ask,
         actions: ActionLog::at(home),
         daily_limit: config.spend.daily_limit(),
+        context_window,
     })
 }
 

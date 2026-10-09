@@ -2,6 +2,24 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: A long conversation is cut down by rule, not summarised
+- **By:** design, at the start of M2.
+- **Decision:**
+  - Before each model call the request is sized at four bytes to a token. Past three quarters of the model's context window, the model's view of the transcript is cut down to about half the window.
+  - What goes, in order: tool results from before the last four turns, each replaced by one line; whole turns, oldest first, with one note where the cut is; the older tool results of the turn in progress.
+  - The cut is a marker appended to the transcript. Every message stays in the file.
+  - The owner is told when it happens, and where the model's view now starts.
+  - The window is the one the provider lists for the model, or 100,000 tokens where it lists none.
+- **Chosen vs rejected:**
+  - Rejected asking a model to summarise the part that is dropped: it costs a call, it can fail, and it decides by itself what the agent goes on knowing. A rule the owner can read does the same thing every time.
+  - Rejected rewriting the transcript: the whole history is the only thing a later index or a memory pass can be built from.
+  - Rejected cutting to just under the limit: the next message would cut again, and every cut costs the provider's cache of the conversation.
+- **Why:** A chat with the agent never resets. Without this the first long conversation ends in an error from the provider.
+- **Where:** `tiphys-core/src/compact.rs`, `session.rs` (`context`, `compact`), `agent.rs` (`fit`).
+- **Residual risk:**
+  - What is dropped is gone from the model's view. Until memory exists (M3), a fact stated early in a long chat is forgotten.
+  - Four bytes to a token is rough. For text in scripts that use more bytes per token it cuts early, which is the safe side; a model with an unlisted, smaller window can still overflow.
+
 ### 2026-10-09: Tiphys thinks as one user and acts as another
 - **By:** the owner, choosing among three ways to protect the key store.
 - **Decision:**

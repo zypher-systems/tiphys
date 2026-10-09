@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::compact::{self, View};
 use crate::files::{SHARED_DIR, SHARED_FILE, ensure_dir, write_atomic};
 use crate::llm::{Message, Role, ToolSpec};
 use crate::proto::{Event, StopReason};
@@ -66,7 +67,18 @@ pub struct Opening {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Record {
-    Message { at: DateTime<Utc>, message: Message },
+    Message {
+        at: DateTime<Utc>,
+        message: Message,
+    },
+    /// From here on the model is sent less than the whole transcript: it
+    /// starts at message `start`, and tool results before `trim_before` are
+    /// left out. Every message is still in the file.
+    Compacted {
+        at: DateTime<Utc>,
+        start: usize,
+        trim_before: usize,
+    },
 }
 
 /// One line of the event file.
@@ -85,6 +97,8 @@ pub struct Session {
     system: String,
     tools: Vec<ToolSpec>,
     messages: Vec<Message>,
+    /// How much of the transcript the model is sent.
+    view: View,
     seq: u64,
 }
 
@@ -111,6 +125,7 @@ impl Session {
             system: opening.system,
             tools: opening.tools,
             messages: Vec::new(),
+            view: View::default(),
             seq: 0,
         };
         // Written last: a directory without it is a session that never began.
@@ -135,10 +150,16 @@ impl Session {
         let system = read(SYSTEM)?;
         let tools = serde_json::from_str(&read(TOOLS)?)
             .map_err(|e| Error::Io(format!("{}: {e}", dir.join(TOOLS).display())))?;
-        let messages = jsonl::read::<Record>(&dir.join(TRANSCRIPT))?
-            .into_iter()
-            .map(|Record::Message { message, .. }| message)
-            .collect();
+        let mut messages = Vec::new();
+        let mut view = View::default();
+        for record in jsonl::read::<Record>(&dir.join(TRANSCRIPT))? {
+            match record {
+                Record::Message { message, .. } => messages.push(message),
+                Record::Compacted {
+                    start, trim_before, ..
+                } => view = View { start, trim_before },
+            }
+        }
         let seq = jsonl::read::<Stamped>(&dir.join(EVENTS))?
             .last()
             .map_or(0, |stamped| stamped.seq);
@@ -148,6 +169,7 @@ impl Session {
             system,
             tools,
             messages,
+            view,
             seq,
         })
     }
@@ -166,8 +188,33 @@ impl Session {
         &self.tools
     }
 
+    /// Every message of the session, from the first.
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// The messages the model is sent: all of them, until the conversation
+    /// has been cut down to fit, and from then on what the cut left.
+    pub fn context(&self) -> Vec<Message> {
+        compact::apply(&self.messages, self.view)
+    }
+
+    /// How much of the transcript the model is sent.
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    /// Cuts down what the model is sent. The transcript itself is only added
+    /// to: a marker says where the view now starts.
+    pub fn compact(&mut self, view: View) -> Result<()> {
+        let record = Record::Compacted {
+            at: Utc::now(),
+            start: view.start,
+            trim_before: view.trim_before,
+        };
+        jsonl::append(&self.dir.join(TRANSCRIPT), &record)?;
+        self.view = view;
+        Ok(())
     }
 
     /// Adds a message to the transcript. It is on disk before this returns.
@@ -177,7 +224,9 @@ impl Session {
             message,
         };
         jsonl::append(&self.dir.join(TRANSCRIPT), &record)?;
-        let Record::Message { message, .. } = record;
+        let Record::Message { message, .. } = record else {
+            return Ok(());
+        };
         if self.meta.title.is_empty() && message.role == Role::User {
             self.meta.title = title_of(&message.content);
             self.write_meta()?;
@@ -564,6 +613,53 @@ mod tests {
                 text: "event 25".into()
             }
         );
+    }
+
+    #[test]
+    fn cutting_the_view_down_keeps_every_message_and_survives_a_reopen() {
+        let home = tempfile::tempdir().unwrap();
+        let mut session = Session::create(home.path(), opening()).unwrap();
+        for n in 0..3 {
+            session
+                .push(Message::user(format!("question {n}")))
+                .unwrap();
+            session
+                .push(Message::assistant("", vec![call(&format!("c{n}"))]))
+                .unwrap();
+            session
+                .push(Message::tool(format!("c{n}"), "a long result"))
+                .unwrap();
+            session
+                .push(Message::assistant(format!("answer {n}"), vec![]))
+                .unwrap();
+        }
+        assert_eq!(session.context(), session.messages());
+
+        session
+            .compact(View {
+                start: 4,
+                trim_before: 8,
+            })
+            .unwrap();
+        session.push(Message::user("question 3")).unwrap();
+
+        let reopened = Session::open(home.path(), &session.meta().id).unwrap();
+        assert_eq!(reopened.messages().len(), 13);
+        assert_eq!(
+            reopened.view(),
+            View {
+                start: 4,
+                trim_before: 8
+            }
+        );
+        let context = reopened.context();
+        // A note where the cut is, then the second turn with its result thinned.
+        assert_eq!(context.len(), 10);
+        assert!(context[0].content.contains("first 4 messages"));
+        assert_eq!(context[1].content, "question 1");
+        assert_eq!(context[3].content, compact::TRIMMED);
+        assert_eq!(context[7].content, "a long result");
+        assert_eq!(context[9].content, "question 3");
     }
 
     #[test]

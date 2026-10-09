@@ -21,6 +21,7 @@ use crate::Result;
 use crate::actionlog::{ActionLog, Gate, Record};
 use crate::approval::{Approver, Ask, Decision};
 use crate::cancel::Cancel;
+use crate::compact;
 use crate::config::Limits;
 use crate::llm::{self, Delta, Message, Provider, Reply, ReplyBuilder, ToolCall};
 use crate::policy::Class;
@@ -82,6 +83,8 @@ pub struct Agent {
     pub actions: ActionLog,
     /// The most that may be spent in a day, in dollars, if there is a limit.
     pub daily_limit: Option<f64>,
+    /// The model's context window in tokens, where the provider says.
+    pub context_window: Option<u64>,
 }
 
 impl Agent {
@@ -131,6 +134,7 @@ impl Agent {
                 self.tell(emit, Event::Notice { text: notice })?;
                 return Ok(StopReason::Budget);
             }
+            self.fit(emit)?;
             turn.rounds += 1;
             let Some(reply) = self.ask(emit).await? else {
                 return Ok(StopReason::Cancelled);
@@ -198,6 +202,37 @@ impl Agent {
         Ok(StopReason::Rounds)
     }
 
+    /// Cuts the conversation down if it is close to more than the model can
+    /// hold. The owner is told: from here on the model no longer sees the
+    /// start of the conversation.
+    fn fit(&mut self, emit: Emit<'_>) -> Result<()> {
+        let window = self.context_window.unwrap_or(compact::DEFAULT_WINDOW);
+        let fixed = compact::estimate(self.session.system(), &[], self.session.tools());
+        let tokens = fixed + compact::estimate("", &self.session.context(), &[]);
+        if !compact::is_due(tokens, window) {
+            return Ok(());
+        }
+        let Some(view) = compact::plan(self.session.messages(), self.session.view(), window, fixed)
+        else {
+            return Ok(());
+        };
+        self.session.compact(view)?;
+        let now = fixed + compact::estimate("", &self.session.context(), &[]);
+        self.tell(
+            emit,
+            Event::Notice {
+                text: format!(
+                    "This conversation was getting long for the model, so its oldest part is no \
+                     longer sent: it now starts at message {} of {}, about {}% of what the model \
+                     can hold. Nothing was deleted from the session.",
+                    view.start + 1,
+                    self.session.messages().len(),
+                    now * 100 / window.max(1)
+                ),
+            },
+        )
+    }
+
     /// Says so if the day's spending has reached its limit. The total is the
     /// ledger's, so it counts every session, not only this one.
     fn over_the_limit(&self) -> Result<Option<String>> {
@@ -222,7 +257,7 @@ impl Agent {
         let request = llm::Request {
             model: self.session.meta().model.clone(),
             system: Some(self.session.system().to_string()),
-            messages: self.session.messages().to_vec(),
+            messages: self.session.context(),
             tools: self.session.tools().to_vec(),
             max_tokens: self.limits.max_tokens,
         };
@@ -568,6 +603,7 @@ mod tests {
                 ask_before_change: false,
                 actions: ActionLog::at(&log_home),
                 daily_limit: None,
+                context_window: None,
             },
             provider: replay,
             user_home: home,
@@ -807,6 +843,58 @@ mod tests {
         // Without a limit it goes on.
         f.agent.daily_limit = None;
         assert_eq!(f.turn("fourth").await.reason, StopReason::Completed);
+    }
+
+    #[tokio::test]
+    async fn a_conversation_too_long_for_the_model_is_cut_down_before_it_is_sent() {
+        let mut f = fixture(vec![says("Short answer.")]);
+        f.agent.context_window = Some(8_000);
+        // Ten earlier turns with large tool results: far more than fits.
+        for n in 0..10 {
+            let id = format!("old{n}");
+            f.agent
+                .session
+                .push(Message::user(format!("old question {n}")))
+                .unwrap();
+            let call = ToolCall {
+                id: id.clone(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            };
+            f.agent
+                .session
+                .push(Message::assistant("", vec![call]))
+                .unwrap();
+            f.agent
+                .session
+                .push(Message::tool(id, "x".repeat(8_000)))
+                .unwrap();
+            f.agent
+                .session
+                .push(Message::assistant(format!("old answer {n}"), vec![]))
+                .unwrap();
+        }
+        let turn = f.turn("and now?").await;
+        assert_eq!(turn.reason, StopReason::Completed);
+
+        // What was sent fits, starts with the note, and ends with the question.
+        let sent = &f.provider.requests()[0];
+        let tokens = compact::estimate(
+            sent.system.as_deref().unwrap_or_default(),
+            &sent.messages,
+            &sent.tools,
+        );
+        assert!(tokens <= 6_000, "{tokens}");
+        assert!(
+            sent.messages[0]
+                .content
+                .contains("were left out to fit your context")
+        );
+        assert_eq!(sent.messages.last().unwrap().content, "and now?");
+        // The owner was told, and the session still has everything.
+        assert!(f.kinds().iter().any(|kind| kind == "notice"));
+        assert_eq!(f.agent.session.messages().len(), 42);
+        assert!(f.agent.session.view().start > 0);
     }
 
     #[tokio::test]
