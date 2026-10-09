@@ -11,8 +11,10 @@
 //! | The service | `/etc/systemd/system/tiphys.service` |
 //! | Who may talk to it, and how it starts its worker | `[daemon]` in `/var/lib/tiphysd/settings.toml` |
 //!
-//! The owner is added to the `tiphysd` group, which is what lets them reach
-//! the socket in `/run/tiphys`.
+//! The owner is added to two groups: `tiphysd`, which is what lets them reach
+//! the socket in `/run/tiphys`, and `tiphys`, which is what lets them read
+//! the files the agent writes in its home. Neither lets them into the state
+//! directory, and the second gives no way to write.
 //!
 //! The install is worked out as a list of steps before anything is done.
 //! `--dry-run` prints the list, and the tests check it, so what root will do
@@ -203,13 +205,15 @@ pub fn plan(options: &Options, machine: &dyn Machine) -> Result<Vec<Step>> {
             ],
         ));
     }
+    // Two groups, for two different things: the daemon's, to reach its
+    // socket, and the agent's, to read what the agent writes in its home.
     steps.push(run(
-        "let the owner reach the daemon's socket",
+        "let the owner reach the daemon's socket and read the agent's files",
         &[
             "usermod",
             "--append",
             "--groups",
-            DAEMON_USER,
+            &format!("{DAEMON_USER},{WORK_USER}"),
             &options.owner,
         ],
     ));
@@ -464,7 +468,7 @@ mod tests {
             [
                 "useradd --system --user-group --home-dir /var/lib/tiphysd --shell /usr/sbin/nologin tiphysd",
                 "useradd --system --user-group --create-home --home-dir /home/tiphys --shell /bin/bash tiphys",
-                "usermod --append --groups tiphysd ada",
+                "usermod --append --groups tiphysd,tiphys ada",
                 "install --directory --mode 0700 --owner tiphysd --group tiphysd /var/lib/tiphysd",
                 "chown tiphysd:tiphysd /var/lib/tiphysd/settings.toml",
                 "systemctl daemon-reload",

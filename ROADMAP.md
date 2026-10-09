@@ -42,8 +42,8 @@ Nothing is in progress. M0 and M1 are done and released as 0.1.0; M2 is next.
 
 Found on the first installed server, and not yet dealt with:
 
-- The owner cannot read the agent's home. `/home/tiphys` is open to its own group only, and the
-  owner is not in it, so a file the agent was asked to write cannot be read back without `sudo`.
+- The owner could not read the agent's home: the install put them in the daemon's group and
+  not the agent's. Fixed in `dev`: the install adds the owner to both. Not yet released.
 - The app draws Markdown as it arrives: a fenced block shows its backticks.
 - Captures of a real provider's streams are still owed for `crates/tiphys-core/fixtures/chat/`;
   nothing records a stream.

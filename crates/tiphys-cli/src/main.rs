@@ -184,9 +184,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let steps = install::plan(&options, &install::ThisMachine)?;
             if carry_out(&steps, dry_run)? {
                 say!("Tiphys is installed and running as a service.");
+                say!("{owner} was added to two groups, which takes effect at the next login:");
+                say!("  {}  to talk to the daemon", install::DAEMON_USER);
                 say!(
-                    "{owner} was added to the {} group, which takes effect at the next login.",
-                    install::DAEMON_USER
+                    "  {}   to read the files the agent writes in {}",
+                    install::WORK_USER,
+                    install::WORK_HOME
                 );
                 say!("Log out and in again, then run `tiphys` and add a connection.");
             }

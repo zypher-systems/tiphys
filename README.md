@@ -32,8 +32,9 @@ An installed Tiphys is two users:
 
 A command the agent runs cannot read a key, because the user it runs as cannot.
 
-You are added to the `tiphysd` group, which is what lets you reach the daemon. Log out and in
-again, then:
+You are added to two groups: `tiphysd`, which is what lets you reach the daemon, and `tiphys`,
+which is what lets you read the files the agent writes in `/home/tiphys`. Log out and in again,
+then:
 
 ```sh
 tiphys

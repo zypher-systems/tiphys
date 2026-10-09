@@ -83,6 +83,14 @@ as_owner "tiphys -p 'how full is the root disk? write the answer to ~/disk.txt'"
 sudo grep -q '%' /home/tiphys/disk.txt || fail "the file does not hold what df printed"
 ok "a turn ran: a command and a file write, both as the user the agent acts as"
 
+# The owner can read what the agent wrote, through the agent's group, and
+# cannot change it.
+sg tiphys -c "cat /home/tiphys/disk.txt" | grep -q '%' || fail "the owner cannot read the agent's file"
+if sg tiphys -c "touch /home/tiphys/owner-was-here" 2>/dev/null; then
+    fail "the owner can write in the agent's home"
+fi
+ok "the owner can read the agent's files and cannot change them"
+
 pgrep -u tiphys -f "tiphys worker" >/dev/null || fail "no worker is running as the user the agent acts as"
 if sudo -u tiphys cat "$state/keys/fake" >/dev/null 2>&1; then
     fail "the user the agent acts as can read a key"
