@@ -96,6 +96,38 @@ pub fn remove_connection(home: &Path, name: &str) -> Result<bool> {
     Ok(removed)
 }
 
+/// Sets what an install decides: `owner` is added to those who may talk to
+/// the daemon, and `worker` is the command that starts its worker.
+pub fn set_daemon(home: &Path, owner: u32, worker: &[String]) -> Result<()> {
+    edit(home, |doc| {
+        let daemon = doc
+            .entry("daemon")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| not_a_table("daemon"))?;
+        let owners = daemon
+            .entry("owners")
+            .or_insert(value(toml_edit::Array::new()))
+            .as_array_mut()
+            .ok_or_else(|| {
+                Error::Config(format!("{SETTINGS_FILE}: `daemon.owners` is not a list"))
+            })?;
+        let listed = owners
+            .iter()
+            .any(|listed| listed.as_integer() == Some(i64::from(owner)));
+        if !listed {
+            owners.push(i64::from(owner));
+        }
+        daemon["worker"] = value(
+            worker
+                .iter()
+                .map(String::as_str)
+                .collect::<toml_edit::Array>(),
+        );
+        Ok(())
+    })
+}
+
 fn edit(home: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
     let path = home.join(SETTINGS_FILE);
     let text = match std::fs::read_to_string(&path) {
@@ -239,6 +271,35 @@ mod tests {
         let config = load_at(home.path()).unwrap();
         assert_eq!(config.default_connection, None);
         assert_eq!(config.starting_connection().unwrap().0, "b");
+    }
+
+    #[test]
+    fn an_install_adds_its_owner_and_sets_the_worker_without_losing_the_rest() {
+        let home = tempfile::tempdir().unwrap();
+        save_connection(
+            home.path(),
+            "a",
+            &connection("https://a.example/v1", Some("m")),
+        )
+        .unwrap();
+        let worker = |binary: &str| {
+            vec![
+                "sudo".to_string(),
+                "-u".into(),
+                "tiphys".into(),
+                binary.into(),
+                "worker".into(),
+            ]
+        };
+        set_daemon(home.path(), 1000, &worker("/usr/local/bin/tiphys")).unwrap();
+        // A second install: another owner, and the binary somewhere else.
+        set_daemon(home.path(), 1001, &worker("/usr/bin/tiphys")).unwrap();
+        set_daemon(home.path(), 1000, &worker("/usr/bin/tiphys")).unwrap();
+
+        let config = load_at(home.path()).unwrap();
+        assert_eq!(config.daemon.owners, [1000, 1001]);
+        assert_eq!(config.daemon.worker, worker("/usr/bin/tiphys"));
+        assert_eq!(config.connections["a"].model.as_deref(), Some("m"));
     }
 
     #[test]

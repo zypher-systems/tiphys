@@ -1628,6 +1628,7 @@ name = "tiphys-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rustix 1.1.5",
  "serde_json",
  "tiphys-core",
  "tiphys-daemon",

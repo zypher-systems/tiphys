@@ -22,4 +22,5 @@ tiphys-tui.workspace = true
 tiphys-daemon.workspace = true
 clap.workspace = true
 tokio.workspace = true
+rustix.workspace = true
 serde_json.workspace = true

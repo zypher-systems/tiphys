@@ -12,6 +12,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod install;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::os::unix::fs::PermissionsExt;

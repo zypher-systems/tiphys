@@ -151,7 +151,7 @@ impl Printer {
     fn show(&mut self, event: &Event) {
         if self.json {
             if let Ok(line) = serde_json::to_string(event) {
-                println!("{line}");
+                say!("{line}");
             }
             return;
         }
@@ -195,7 +195,7 @@ impl Printer {
 
     fn end_line(&mut self) {
         if self.mid_line {
-            println!();
+            say!();
             self.mid_line = false;
         }
     }

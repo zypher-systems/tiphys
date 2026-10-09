@@ -84,8 +84,13 @@ install on.
 - [x] A worker: the agent's actions, file tools and commands alike, are planned and run in a
       `tiphys worker` process that the daemon starts with a configured command. Run by hand that
       is the same user; installed, it is a second user who cannot read the keys or the state.
-- [ ] `tiphys daemon install`: the users, the unit, the directories, and the owner who may connect.
-      A daily spending limit, on by default. A key read from the environment does not stay in it.
+- [x] `tiphys daemon install --owner <name>`: the two users, the one sudoers rule between them,
+      the unit, the state directory, and the owner's way to the socket. `--dry-run` shows every
+      command and file first. CI installs it for real on a throwaway Ubuntu machine, runs a turn
+      through the worker, checks that the worker's user cannot read a key, and uninstalls.
+- [ ] `tiphys log`, `spend`, `sessions` and `doctor` for the owner of an installed Tiphys, whose
+      state they cannot read themselves: asked of the daemon.
+- [ ] A daily spending limit, on by default.
 - [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
       x86_64 and arm64 and drafts the release. CI builds the same archives and runs the installer on
       them on every push. The installer hands over to `tiphys daemon install` once that exists.

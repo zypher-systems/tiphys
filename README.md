@@ -45,6 +45,9 @@ you choose, and only then saves it.
 - `tiphys daemon run` runs the daemon in the foreground. While it runs, the app and `tiphys -p`
   are its clients: close the app in the middle of a turn, open it again, and the turn is there.
   `tiphys daemon status` says whether one is answering.
+- `sudo tiphys daemon install --owner <you>` sets Tiphys up as a service on an Ubuntu server,
+  as two users: one that holds the keys, and one that the agent acts as and that cannot read
+  them. `--dry-run` shows what it would do.
 - `tiphys doctor` checks the installation. `tiphys doctor --live` also makes a real tool call on
   the default connection.
 

@@ -27,7 +27,7 @@ jobs:
       - name: version
         run: cargo run -p tiphys-cli -- --version
       - name: installer syntax
-        run: sh -n install.sh && sh -n packaging/build.sh
+        run: sh -n install.sh && sh -n packaging/build.sh && sh -n packaging/test/installed.sh
 
   # The build a release is made of, and the installer run on its result, on
   # both kinds of machine a release is for.
@@ -58,3 +58,8 @@ jobs:
           sh install.sh --from dist/tiphys-${{ matrix.target }}.tar.gz --prefix "$RUNNER_TEMP/prefix" --no-service
           "$RUNNER_TEMP/prefix/bin/tiphys" --version
           "$RUNNER_TEMP/prefix/bin/tiphys" doctor || true
+      # The runner is thrown away after the job, so the service can be
+      # installed on it for real: two users, the sudoers rule, the unit, a
+      # turn through the worker, and the uninstall.
+      - name: install as a service, for real
+        run: sh packaging/test/installed.sh dist/tiphys-${{ matrix.target }}.tar.gz

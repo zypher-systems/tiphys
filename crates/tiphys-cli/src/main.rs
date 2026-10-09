@@ -13,6 +13,18 @@ use tiphys_core::actionlog::{ActionLog, Entry};
 use tiphys_core::client::{self, Client};
 use tiphys_core::wire::{self, ONESHOT, TERMINAL};
 use tiphys_core::{Error, Result, config, session, spend};
+use tiphys_daemon::install;
+
+/// Prints a line. If nothing is reading any more, as when the output was
+/// piped into `head`, the program ends quietly instead of failing.
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if writeln!(std::io::stdout(), $($arg)*).is_err() {
+            std::process::exit(0);
+        }
+    }};
+}
 
 mod oneshot;
 
@@ -90,6 +102,21 @@ enum DaemonCommand {
     Run,
     /// Say whether a daemon is answering.
     Status,
+    /// Set the daemon up as a service on this machine. Needs root.
+    Install {
+        /// The user who will talk to Tiphys.
+        #[arg(long, value_name = "NAME")]
+        owner: String,
+        /// Show what would be done, and do nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Stop and remove the service. The users and the data are kept.
+    Uninstall {
+        /// Show what would be done, and do nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -142,6 +169,39 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Some(Command::Daemon {
             what: DaemonCommand::Status,
         }) => return daemon_status(&home),
+        Some(Command::Daemon {
+            what: DaemonCommand::Install { owner, dry_run },
+        }) => {
+            let binary = std::env::current_exe()
+                .and_then(|path| path.canonicalize())
+                .map_err(|e| Error::Io(format!("could not tell where this binary is: {e}")))?;
+            let options = install::Options {
+                owner: owner.clone(),
+                binary,
+            };
+            let steps = install::plan(&options, &install::ThisMachine)?;
+            if carry_out(&steps, dry_run)? {
+                say!("Tiphys is installed and running as a service.");
+                say!(
+                    "{owner} was added to the {} group, which takes effect at the next login.",
+                    install::DAEMON_USER
+                );
+                say!("Log out and in again, then run `tiphys` and add a connection.");
+            }
+        }
+        Some(Command::Daemon {
+            what: DaemonCommand::Uninstall { dry_run },
+        }) => {
+            if carry_out(&install::uninstall_plan(), dry_run)? {
+                say!(
+                    "The service is removed. The users {} and {}, and the data in {} and {}, were kept.",
+                    install::DAEMON_USER,
+                    install::WORK_USER,
+                    install::STATE_DIR,
+                    install::WORK_HOME
+                );
+            }
+        }
         Some(Command::Doctor { live }) => return doctor(&home, live),
         Some(Command::Log { count, what }) => print_log(&home, count, what)?,
         Some(Command::Sessions) => print_sessions(&home)?,
@@ -168,21 +228,42 @@ fn daemon(home: &Path, audience: &str) -> Result<Option<Client>> {
     }
 }
 
+/// Does the steps of an install or an uninstall, or with `dry_run` only shows
+/// them. Returns whether they were done.
+fn carry_out(steps: &[install::Step], dry_run: bool) -> Result<bool> {
+    if dry_run {
+        say!("Nothing is changed. This is what would be done, in order:\n");
+        for (number, step) in steps.iter().enumerate() {
+            say!("{}. {}\n", number + 1, install::describe(step));
+        }
+        return Ok(false);
+    }
+    if !rustix::process::geteuid().is_root() {
+        return Err(Error::Config(
+            "this changes users and services, so it needs root: run it with sudo, or add \
+             --dry-run to see what it would do"
+                .into(),
+        ));
+    }
+    install::apply(steps)?;
+    Ok(true)
+}
+
 fn daemon_status(home: &Path) -> Result<ExitCode> {
     let socket = match wire::find(home) {
         wire::Daemon::Expected(socket) | wire::Daemon::Perhaps(socket) => socket,
         wire::Daemon::None => {
-            println!("No daemon is running for {}.", home.display());
+            say!("No daemon is running for {}.", home.display());
             return Ok(ExitCode::FAILURE);
         }
     };
     match client::connect(&socket, TERMINAL) {
         Ok(_) => {
-            println!("The daemon is answering on {}.", socket.display());
+            say!("The daemon is answering on {}.", socket.display());
             Ok(ExitCode::SUCCESS)
         }
         Err(e) => {
-            println!("{e}");
+            say!("{e}");
             Ok(ExitCode::FAILURE)
         }
     }
@@ -214,13 +295,13 @@ fn doctor(home: &Path, live: bool) -> Result<ExitCode> {
     }
     for check in &checks {
         let mark = if check.ok { "✓" } else { "✗" };
-        println!("{mark} {}: {}", check.name, check.detail);
+        say!("{mark} {}: {}", check.name, check.detail);
     }
     let failed = checks.iter().filter(|check| !check.ok).count();
     Ok(if failed == 0 {
         ExitCode::SUCCESS
     } else {
-        println!("{failed} of {} checks did not pass.", checks.len());
+        say!("{failed} of {} checks did not pass.", checks.len());
         ExitCode::FAILURE
     })
 }
@@ -231,11 +312,11 @@ fn print_log(home: &Path, count: usize, what: Option<LogCommand>) -> Result<()> 
         None => {
             let entries = log.entries()?;
             if entries.is_empty() {
-                println!("The action log is empty.");
+                say!("The action log is empty.");
             }
             let skip = entries.len().saturating_sub(count);
             for entry in &entries[skip..] {
-                println!("{}", log_line(entry));
+                say!("{}", log_line(entry));
             }
         }
         Some(LogCommand::Show { seq }) => {
@@ -246,11 +327,11 @@ fn print_log(home: &Path, count: usize, what: Option<LogCommand>) -> Result<()> 
                 .ok_or_else(|| Error::Config(format!("the action log has no entry {seq}")))?;
             let json = serde_json::to_string_pretty(entry)
                 .map_err(|e| Error::Io(format!("cannot show the entry: {e}")))?;
-            println!("{json}");
+            say!("{json}");
         }
         Some(LogCommand::Verify) => {
             let count = log.verify()?;
-            println!(
+            say!(
                 "{count} entries, each following from the one before. Nothing has been changed or removed."
             );
         }
@@ -278,10 +359,10 @@ fn log_line(entry: &Entry) -> String {
 fn print_sessions(home: &Path) -> Result<()> {
     let sessions = session::list(home)?;
     if sessions.is_empty() {
-        println!("No sessions yet.");
+        say!("No sessions yet.");
     }
     for meta in sessions {
-        println!(
+        say!(
             "{}  {}  {}  {}",
             meta.id,
             meta.created.format("%Y-%m-%d %H:%M"),
@@ -294,8 +375,8 @@ fn print_sessions(home: &Path) -> Result<()> {
 
 fn print_spend(home: &Path) -> Result<()> {
     let (today, month) = spend::totals(home)?;
-    println!("Today       {today}");
-    println!("This month  {month}");
-    println!("Days and months are counted in UTC.");
+    say!("Today       {today}");
+    say!("This month  {month}");
+    say!("Days and months are counted in UTC.");
     Ok(())
 }
