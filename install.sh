@@ -53,9 +53,11 @@ as_root() {
     fi
 }
 
-# Runs a command that writes under the prefix: as root only if it has to be.
+# Runs a command that writes under the prefix. A binary a service will run
+# has to belong to root, so with the service it is always root that writes
+# it; without, root is used only where the prefix needs it.
 in_prefix() {
-    if [ -w "$prefix" ] || { [ ! -e "$prefix" ] && [ -w "$(dirname "$prefix")" ]; }; then
+    if [ "$service" -eq 0 ] && { [ -w "$prefix" ] || { [ ! -e "$prefix" ] && [ -w "$(dirname "$prefix")" ]; }; }; then
         "$@"
     else
         as_root "$@"

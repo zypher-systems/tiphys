@@ -52,8 +52,9 @@ pub trait Machine {
     /// The numeric id of a user, if there is such a user.
     fn uid(&self, user: &str) -> Option<u32>;
 
-    /// Whether a file belongs to root and can be changed by nobody else.
-    fn only_root_can_change(&self, path: &Path) -> bool;
+    /// The file itself, or the first directory on the way to it, that someone
+    /// other than root could change. `None` means it is root's alone.
+    fn open_to_others(&self, path: &Path) -> Option<PathBuf>;
 }
 
 /// One thing the install does.
@@ -162,10 +163,12 @@ pub fn plan(options: &Options, machine: &dyn Machine) -> Result<Vec<Step>> {
     }
     // The service runs this file, and the sudoers rule lets it be run as the
     // work user. If anyone but root could replace it, they could do both.
-    if !machine.only_root_can_change(&options.binary) {
+    if let Some(open) = machine.open_to_others(&options.binary) {
         return Err(Error::Config(format!(
-            "{binary} can be changed by a user other than root, so it cannot be what the service \
-             runs; install Tiphys to /usr/local/bin first, which install.sh does"
+            "{} can be changed by a user other than root, so {binary} cannot be what the service \
+             runs; it has to be owned by root, in directories only root can write to, which is \
+             where install.sh puts it",
+            open.display()
         )));
     }
     let mut steps = Vec::new();
@@ -406,14 +409,16 @@ impl Machine for ThisMachine {
         String::from_utf8_lossy(&output.stdout).trim().parse().ok()
     }
 
-    fn only_root_can_change(&self, path: &Path) -> bool {
+    fn open_to_others(&self, path: &Path) -> Option<PathBuf> {
         use std::os::unix::fs::MetadataExt;
         // The file, and every directory above it: whoever can rename a
         // directory on the way can swap what is at the end of it.
-        path.ancestors().all(|part| {
-            part.as_os_str().is_empty()
-                || std::fs::metadata(part).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
-        })
+        path.ancestors()
+            .filter(|part| !part.as_os_str().is_empty())
+            .find(|part| {
+                !std::fs::metadata(part).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
+            })
+            .map(Path::to_path_buf)
     }
 }
 
@@ -428,8 +433,8 @@ mod tests {
         fn uid(&self, user: &str) -> Option<u32> {
             self.0.get(user).copied()
         }
-        fn only_root_can_change(&self, path: &Path) -> bool {
-            path.starts_with("/usr")
+        fn open_to_others(&self, path: &Path) -> Option<PathBuf> {
+            (!path.starts_with("/usr")).then(|| path.to_path_buf())
         }
     }
 
@@ -587,7 +592,7 @@ mod tests {
         };
         let err = plan(&in_home, &known).unwrap_err().to_string();
         assert!(
-            err.contains("can be changed by a user other than root"),
+            err.contains("release/tiphys can be changed by a user other than root"),
             "{err}"
         );
         for binary in ["tiphys", "/usr/my apps/tiphys", "/usr/a,b/tiphys"] {

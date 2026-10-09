@@ -21,7 +21,14 @@ state=/var/lib/tiphysd
 # a person is their next login.
 as_owner() { sg tiphysd -c "$*"; }
 
-sudo sh "$root/install.sh" --from "$archive" --owner "$owner"
+# CI's machines let any user write to /usr/local. A server does not, and the
+# install refuses a binary that someone other than root could replace, so
+# this machine is made like a server first.
+sudo chown root:root /usr /usr/local /usr/local/bin
+sudo chmod 755 /usr /usr/local /usr/local/bin
+
+sh "$root/install.sh" --from "$archive" --owner "$owner"
+[ "$(stat -c '%U' /usr/local/bin/tiphys)" = "root" ] || fail "the installed binary does not belong to root"
 sudo systemctl is-active --quiet tiphys.service || fail "the service is not running"
 ok "installed, and the service is running"
 
