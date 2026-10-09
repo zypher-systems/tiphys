@@ -11,7 +11,7 @@
 use std::io::Stdout;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -79,6 +79,15 @@ pub fn run(home: &Path, user_home: &Path) -> Result<()> {
     outcome
 }
 
+/// Runs the app as a client of a daemon, until the owner leaves it or the
+/// daemon goes away.
+pub fn run_attached(client: &tiphys_core::client::Client) -> Result<()> {
+    let send = |request: Request| {
+        let _ = client.send(request);
+    };
+    Screen::open().and_then(|mut screen| screen.run(&send, &client.events))
+}
+
 /// The terminal while the app has it. Dropping this gives it back, on every
 /// way out, a panic included.
 struct Screen {
@@ -105,9 +114,21 @@ impl Screen {
         let mut dirty = true;
         let mut ticked = Instant::now();
         while !view.quit {
-            while let Ok(event) = events.try_recv() {
-                send(view::apply(&mut view, &event));
-                dirty = true;
+            loop {
+                match events.try_recv() {
+                    Ok(event) => {
+                        send(view::apply(&mut view, &event));
+                        dirty = true;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        return Err(Error::Io(
+                            "the connection to the Tiphys daemon was lost; start tiphys again to \
+                             pick the conversation back up"
+                                .into(),
+                        ));
+                    }
+                }
             }
             if ticked.elapsed() >= TICK {
                 view.tick += 1;

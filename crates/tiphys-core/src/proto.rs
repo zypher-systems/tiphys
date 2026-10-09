@@ -24,7 +24,8 @@ use crate::policy::Class;
 use crate::spend::Usage;
 
 /// What a client asks for.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
     /// Say where things stand. Answered with [`Event::State`].
     Hello,
@@ -59,7 +60,7 @@ pub enum Request {
 }
 
 /// A connection as it is being set up: not yet saved, with the key as typed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Draft {
     pub name: String,
     pub connection: Connection,
@@ -265,6 +266,66 @@ mod tests {
             .unwrap(),
             r#"{"kind":"turn_finished","reason":"cut_off"}"#
         );
+    }
+
+    #[test]
+    fn requests_travel_as_tagged_json_and_a_typed_key_arrives_as_typed() {
+        let draft = Draft {
+            name: "work".into(),
+            connection: Connection {
+                base_url: "https://api.example.com/v1".into(),
+                model: Some("m".into()),
+                env_key: None,
+                local: false,
+            },
+            key: Secret::new("sk-typed"),
+        };
+        let requests = [
+            Request::Hello,
+            Request::Prompt { text: "hi".into() },
+            Request::Cancel,
+            Request::Approval {
+                id: "w1".into(),
+                approve: false,
+                note: Some("no".into()),
+            },
+            Request::NewSession,
+            Request::TryConnection(Draft {
+                key: None,
+                ..draft.clone()
+            }),
+            Request::SaveConnection(draft),
+            Request::Models {
+                connection: "work".into(),
+            },
+            Request::ChooseModel {
+                connection: "work".into(),
+                model: "m".into(),
+            },
+        ];
+        for request in requests {
+            let json = serde_json::to_string(&request).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Request>(&json).unwrap(),
+                request,
+                "{json}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&Request::Cancel).unwrap(),
+            r#"{"kind":"cancel"}"#
+        );
+        // The key crosses the wire, and nothing prints it on the way.
+        let sent: Request = serde_json::from_str(
+            r#"{"kind":"save_connection","name":"work","connection":{"base_url":"https://a.example"},"key":"sk-typed"}"#,
+        )
+        .unwrap();
+        let Request::SaveConnection(received) = &sent else {
+            panic!("expected a connection to save");
+        };
+        assert_eq!(received.key.as_ref().unwrap().expose(), "sk-typed");
+        assert!(!format!("{sent:?}").contains("sk-typed"));
+        assert!(serde_json::from_str::<Request>(r#"{"kind":"save_connection","name":"w","connection":{"base_url":"https://a.example"},"key":""}"#).is_err());
     }
 
     #[test]

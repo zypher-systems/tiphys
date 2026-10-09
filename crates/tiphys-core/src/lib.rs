@@ -9,6 +9,7 @@ pub mod actionlog;
 pub mod agent;
 pub mod approval;
 pub mod cancel;
+pub mod client;
 pub mod config;
 pub mod doctor;
 pub mod error;
@@ -27,6 +28,7 @@ pub mod settings;
 pub mod spend;
 pub mod start;
 pub mod tools;
+pub mod wire;
 
 pub use error::{Error, Result};
 

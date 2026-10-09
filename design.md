@@ -231,14 +231,33 @@ A session is a directory of append-only files.
 
 ## 9. The daemon (M1)
 
-- One tokio runtime. One actor per session with an inbox; one turn at a time; input that arrives
-  during a turn is queued.
-- The socket is `/run/tiphys/tiphys.sock`, owned by group `tiphys`. The daemon also checks the user
-  on the other end against the owners in its config.
-- An approval is an event. Every surface attached to the session shows it, and the first valid
-  answer wins.
-- On start, a session whose event file ends in the middle of a turn is closed with an
-  "interrupted" event, and anything waiting for approval is denied.
+`tiphys daemon run` is the agent's hosts behind a Unix socket. It is the only process that writes
+the state directory, and it holds a lock on it; an app started by itself on the same directory is
+refused.
+
+- **Audiences.** There is one host per audience, and each has its own conversation: `terminal` for
+  the owner at the app, `oneshot` for `tiphys -p`. Chat adapters will be audiences too.
+- **Clients.** A client connects, says which audience it is talking as, and is attached to that
+  host. It is sent where things stand and the conversation so far, then everything that happens.
+  When it leaves, the host and any turn it is running carry on.
+- **Catching up.** A client can attach in the middle of a turn. The host reads the session's
+  events and adds the client between two steps of the turn, so nothing is missed and nothing comes
+  twice. A question still waiting for an answer is shown to it, and it can answer.
+- **Who gets what.** What happens in a turn goes to every client of the audience. The answer to a
+  client's own question, such as a model list, goes to that client alone.
+- **The socket.** `/run/tiphys/tiphys.sock` for an installed service, beside the state directory
+  when the daemon is run by hand, or wherever `TIPHYS_SOCKET` says. It is open to its owner and its
+  group. The daemon also asks the kernel who is on the other end: its own user, root, or an owner
+  listed in `[daemon] owners`.
+- **The wire.** One JSON object per line. A client opens with a hello carrying the protocol
+  version; a daemon and a client that differ do not try to understand each other.
+- **Restarts.** A host picks up its audience's last session. A session whose events end in the
+  middle of a turn was cut short; it is closed when it is opened, so no client waits on it.
+- **Stopping.** On SIGTERM the daemon stops any running turn the same way a cancel does, so the
+  end of the turn is on the record, then removes its socket.
+
+A typed key is the one secret that crosses the socket, from the app to the daemon, which stores
+it. Nothing sends one the other way.
 
 ---
 

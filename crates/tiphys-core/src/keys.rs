@@ -41,6 +41,27 @@ impl Secret {
     }
 }
 
+/// A secret is written out in one place only: a frame from the app to the
+/// daemon, on the local socket, when the owner has just typed it. Nothing
+/// that is kept, logged or sent to a model holds one.
+impl serde::Serialize for Secret {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::new(&text).ok_or_else(|| serde::de::Error::custom("an empty secret"))
+    }
+}
+
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(***)")

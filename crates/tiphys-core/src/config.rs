@@ -86,6 +86,18 @@ pub struct Config {
     pub limits: Limits,
     /// What asks before it runs.
     pub approvals: Approvals,
+    /// Who may reach the daemon.
+    pub daemon: Daemon,
+}
+
+/// Who may reach the daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Daemon {
+    /// The numeric ids of the users who own this agent, besides the user the
+    /// daemon runs as and root. Anyone else who reaches the socket is turned
+    /// away.
+    pub owners: Vec<u32>,
 }
 
 /// What asks before it runs.
@@ -388,11 +400,13 @@ mod tests {
 
     #[test]
     fn changes_can_be_made_to_ask() {
-        let home = home_with("[approvals]\nchange = \"ask\"\n", "");
-        assert_eq!(
-            load_at(home.path()).unwrap().approvals.change,
-            OnChange::Ask
+        let home = home_with(
+            "[approvals]\nchange = \"ask\"\n\n[daemon]\nowners = [1000, 1001]\n",
+            "",
         );
+        let config = load_at(home.path()).unwrap();
+        assert_eq!(config.approvals.change, OnChange::Ask);
+        assert_eq!(config.daemon.owners, [1000, 1001]);
     }
 
     #[test]

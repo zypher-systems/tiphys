@@ -2,6 +2,27 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: The daemon catches a client up from inside the host, with no numbers on the wire
+- **By:** design, while building the daemon.
+- **Decision:**
+  - A client attaches to a host by a message in the host's own inbox. The host answers it between two steps of whatever it is doing: it sends the state and the session's events as one `history` event, then adds the client to those it sends to.
+  - There is one host per audience. `terminal` and `oneshot` are separate conversations; a client says which it is talking as.
+  - Turn events go to every client of the audience. Replies to a client's own request go to that client.
+  - A client leaving stops nothing. The daemon stopping cancels the running turn.
+  - With no daemon running, the app hosts the agent itself, under the same lock a daemon takes. With one running, the app and `tiphys -p` are clients.
+- **Chosen vs rejected:**
+  - Rejected sequence numbers on every event with a client asking for "everything after N": a client that reconnects is a new process with nothing on its screen, so it always needs the conversation, and the host can hand it over without a race because it writes and sends each event in one step. The numbers are still in the session's event file.
+  - Rejected one conversation shared by the app and one-shot runs: a script calling `tiphys -p` would write into what the owner is reading.
+  - Rejected stopping a turn when its last client leaves: the point of the daemon is that a dropped connection costs nothing.
+  - Rejected making the app refuse to run without a daemon: on a workstation that is one more thing to start.
+- **Why:** The milestone is "drop the connection in the middle of a turn, come back, and it is all there". That needs the turn to outlive the client and the client to be caught up exactly.
+- **Where:** `tiphys-core/src/host.rs` (`Input`, `attach`, `turn`), `wire.rs`, `client.rs`, `lock.rs`; `tiphys-daemon/src/lib.rs`.
+- **Residual risk:**
+  - The text of a reply that was streaming when a client attached is not replayed; the client sees the reply from where it joined, and the whole message when it is finished.
+  - A client is sent at most the last 400 events of a session.
+  - Anything running as an owner's user is that owner to the daemon.
+  - A Unix socket's path can be 107 bytes at most. A state directory deep in the filesystem needs `TIPHYS_SOCKET`.
+
 ### 2026-10-09: A shell command runs unasked only when all of it is understood
 - **By:** design, while building the shell tool.
 - **Decision:**

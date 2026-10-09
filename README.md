@@ -7,7 +7,7 @@ a terminal app on the server and from chat on your phone.
 > **Status: in development, nothing released.** The first milestone (M0) is built: the terminal
 > app, a connection set up and checked inside it, reading and changing files, running commands,
 > approvals, and the action log. It has been driven end to end against a scripted model; it has not
-> yet been run against a real provider. There is no daemon and no chat yet.
+> yet been run against a real provider. The daemon runs by hand; installing it as a service, and chat, are not built yet.
 > See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how it fits
 > together and [`DECISIONS.md`](DECISIONS.md) for why.
 
@@ -42,6 +42,9 @@ you choose, and only then saves it.
 - `tiphys sessions` lists sessions. `tiphys spend` shows what today and this month have cost.
 - `tiphys log` lists every tool call and how it came to run or not. `tiphys log verify` checks
   that no entry has been changed or removed.
+- `tiphys daemon run` runs the daemon in the foreground. While it runs, the app and `tiphys -p`
+  are its clients: close the app in the middle of a turn, open it again, and the turn is there.
+  `tiphys daemon status` says whether one is answering.
 - `tiphys doctor` checks the installation. `tiphys doctor --live` also makes a real tool call on
   the default connection.
 

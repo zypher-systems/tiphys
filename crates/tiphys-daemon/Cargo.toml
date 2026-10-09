@@ -1,6 +1,6 @@
 [package]
-name = "tiphys-cli"
-description = "Tiphys, an always-on agent for your server"
+name = "tiphys-daemon"
+description = "The Tiphys daemon: the agent's host behind a socket"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,14 +12,14 @@ homepage.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "tiphys"
-path = "src/main.rs"
-
 [dependencies]
 tiphys-core.workspace = true
-tiphys-tui.workspace = true
-tiphys-daemon.workspace = true
-clap.workspace = true
 tokio.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true

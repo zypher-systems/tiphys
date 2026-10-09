@@ -54,3 +54,8 @@
 # exists for the agent; "ask" makes those ask as well.
 # [approvals]
 # change = "run"
+
+# Who may talk to the daemon, by numeric user id, besides the user it runs as
+# and root. `tiphys daemon install --owner <name>` fills this in.
+# [daemon]
+# owners = [1000]

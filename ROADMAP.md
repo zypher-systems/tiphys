@@ -72,14 +72,27 @@ Known gaps in what is built:
 - The conversation is plain text: Markdown is not drawn, and a long diff in an approval card cannot
   be scrolled.
 
-## Next
+**M1: the daemon.** Under way. The order is set by what can be done before there is a server to
+install on.
 
-**M1: the daemon.** The daemon and its socket, the app as a client, a system unit,
-`tiphys daemon install`, an installer for Ubuntu. With the install: commands run where they cannot
-read the key store, the state directory moves out of the home the agent works in, a key read from
-the environment does not stay in it, and a daily spending limit is on by default.
-Done when: it is installed on an Ubuntu VM, you open the app as yourself, drop SSH in the middle of
-a turn, reconnect, and the turn replays and finishes.
+- [x] A host that serves several clients: attach and leave, the conversation replayed to a client
+      that comes late, answers to a client's own questions sent to it alone, the last session
+      picked up after a restart, a turn cut short by a restart closed.
+- [x] The daemon: `tiphys daemon run` behind a Unix socket, one host per audience, clients checked
+      by who they are, a clean stop on SIGTERM. The app and `tiphys -p` are its clients when it is
+      running, and run by themselves when it is not.
+- [ ] Actions run as a second user, so that a command the agent runs cannot read the key store or
+      the state. With it, the state directory moves out of the home the agent works in.
+- [ ] `tiphys daemon install`: the users, the unit, the directories, and the owner who may connect.
+      A daily spending limit, on by default. A key read from the environment does not stay in it.
+- [ ] `install.sh` for Ubuntu and a release workflow that builds the binaries it downloads.
+- [ ] The first release, when the owner asks for it, and the install on a real server.
+
+Done when: it is installed on an Ubuntu server from a release, you open the app as yourself, drop
+SSH in the middle of a turn, reconnect, and the turn replays and finishes. That last part already
+holds on a workstation: a terminal killed mid-turn and reopened shows the turn and its end.
+
+## Next
 
 **M2: Telegram.** The adapter, an allowlist, approvals in chat, compaction. The bot token is entered
 in the app.

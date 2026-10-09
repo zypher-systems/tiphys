@@ -10,6 +10,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use tiphys_core::actionlog::{ActionLog, Entry};
+use tiphys_core::client::{self, Client};
+use tiphys_core::wire::{self, ONESHOT, TERMINAL};
 use tiphys_core::{Error, Result, config, session, spend};
 
 mod oneshot;
@@ -53,6 +55,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Run or look at the daemon.
+    Daemon {
+        #[command(subcommand)]
+        what: DaemonCommand,
+    },
     /// Check that this installation is in working order.
     Doctor {
         /// Also make a real, paid tool call on the default connection.
@@ -71,6 +78,14 @@ enum Command {
     Sessions,
     /// Show what today and this month have cost.
     Spend,
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommand {
+    /// Run the daemon here, in the foreground, until it is stopped.
+    Run,
+    /// Say whether a daemon is answering.
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -103,17 +118,65 @@ fn run(cli: Cli) -> Result<ExitCode> {
             resume: cli.resume,
             json: cli.json,
         };
-        return oneshot::run(&home, run);
+        return match daemon(&home, ONESHOT)? {
+            Some(client) => oneshot::run_attached(&client, run),
+            None => oneshot::run(&home, run),
+        };
     }
     match cli.command {
+        Some(Command::Daemon {
+            what: DaemonCommand::Run,
+        }) => {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
+            runtime.block_on(tiphys_daemon::run(&home, &config::user_home()?))?;
+        }
+        Some(Command::Daemon {
+            what: DaemonCommand::Status,
+        }) => return daemon_status(&home),
         Some(Command::Doctor { live }) => return doctor(&home, live),
         Some(Command::Log { count, what }) => print_log(&home, count, what)?,
         Some(Command::Sessions) => print_sessions(&home)?,
         Some(Command::Spend) => print_spend(&home)?,
-        // With nothing asked for, the app.
-        None => tiphys_tui::run(&home, &config::user_home()?)?,
+        // With nothing asked for, the app: as a client of the daemon if there
+        // is one, and by itself if there is not.
+        None => match daemon(&home, TERMINAL)? {
+            Some(client) => tiphys_tui::run_attached(&client)?,
+            None => tiphys_tui::run(&home, &config::user_home()?)?,
+        },
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Connects to the daemon, if there is one to connect to. A daemon that
+/// should be there and is not answering is an error; a socket file left
+/// behind by one that is gone is not.
+fn daemon(home: &Path, audience: &str) -> Result<Option<Client>> {
+    match wire::find(home) {
+        wire::Daemon::Expected(socket) => client::connect(&socket, audience).map(Some),
+        wire::Daemon::Perhaps(socket) => Ok(client::connect(&socket, audience).ok()),
+        wire::Daemon::None => Ok(None),
+    }
+}
+
+fn daemon_status(home: &Path) -> Result<ExitCode> {
+    let socket = match wire::find(home) {
+        wire::Daemon::Expected(socket) | wire::Daemon::Perhaps(socket) => socket,
+        wire::Daemon::None => {
+            println!("No daemon is running for {}.", home.display());
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    match client::connect(&socket, TERMINAL) {
+        Ok(_) => {
+            println!("The daemon is answering on {}.", socket.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            println!("{e}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 fn doctor(home: &Path, live: bool) -> Result<ExitCode> {
