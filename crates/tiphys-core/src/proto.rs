@@ -21,6 +21,7 @@ use crate::config::Connection;
 use crate::keys::Secret;
 use crate::llm::Model;
 use crate::policy::Class;
+use crate::report::Report;
 use crate::spend::Usage;
 
 /// What a client asks for.
@@ -57,6 +58,9 @@ pub enum Request {
     /// Use this model for new sessions on a connection. Answered with
     /// [`Event::State`].
     ChooseModel { connection: String, model: String },
+    /// Say something about Tiphys itself: its action log, what it has spent,
+    /// its sessions, whether it is in order. Answered with [`Event::Report`].
+    Report(Report),
 }
 
 /// A connection as it is being set up: not yet saved, with the key as typed.
@@ -176,6 +180,9 @@ pub enum Event {
         ok: bool,
         message: String,
     },
+    /// A report that was asked for, as text. `ok` is whether what it found is
+    /// good news.
+    Report { text: String, ok: bool },
     /// A request could not be carried out.
     Failed { message: String },
 }

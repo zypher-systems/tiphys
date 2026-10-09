@@ -299,6 +299,17 @@ impl Host {
                 catalog::store(&self.home, &connection, &models)?;
                 self.reply(client, &Event::Models { models });
             }
+            Request::Report(report) => {
+                let made =
+                    crate::report::render(&self.home, &report, self.connect.as_ref()).await?;
+                self.reply(
+                    client,
+                    &Event::Report {
+                        text: made.text,
+                        ok: made.ok,
+                    },
+                );
+            }
             Request::ChooseModel { connection, model } => {
                 settings::set_model(&self.home, &connection, &model)?;
                 settings::set_default_connection(&self.home, Some(&connection))?;

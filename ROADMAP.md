@@ -88,8 +88,9 @@ install on.
       the unit, the state directory, and the owner's way to the socket. `--dry-run` shows every
       command and file first. CI installs it for real on a throwaway Ubuntu machine, runs a turn
       through the worker, checks that the worker's user cannot read a key, and uninstalls.
-- [ ] `tiphys log`, `spend`, `sessions` and `doctor` for the owner of an installed Tiphys, whose
-      state they cannot read themselves: asked of the daemon.
+- [x] `tiphys log`, `spend`, `sessions` and `doctor` ask the daemon when there is one, since the
+      owner of an installed Tiphys cannot read its state. `doctor` also starts the worker, to see
+      that it works and who the agent acts as.
 - [ ] A daily spending limit, on by default.
 - [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
       x86_64 and arm64 and drafts the release. CI builds the same archives and runs the installer on

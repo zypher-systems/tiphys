@@ -9,10 +9,12 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use tiphys_core::actionlog::{ActionLog, Entry};
 use tiphys_core::client::{self, Client};
+use tiphys_core::llm::ChatConnect;
+use tiphys_core::proto::{Event, Request};
+use tiphys_core::report::{Rendered, Report};
 use tiphys_core::wire::{self, ONESHOT, TERMINAL};
-use tiphys_core::{Error, Result, config, session, spend};
+use tiphys_core::{Error, Result, config};
 use tiphys_daemon::install;
 
 /// Prints a line. If nothing is reading any more, as when the output was
@@ -202,11 +204,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 );
             }
         }
-        Some(Command::Doctor { live }) => return doctor(&home, live),
-        Some(Command::Log { count, what }) => print_log(&home, count, what)?,
-        Some(Command::Sessions) => print_sessions(&home)?,
+        Some(Command::Doctor { live }) => return report(&home, Report::Doctor { live }),
+        Some(Command::Log { count, what }) => {
+            let asked = match what {
+                None => Report::Log { count },
+                Some(LogCommand::Show { seq }) => Report::LogEntry { seq },
+                Some(LogCommand::Verify) => Report::LogVerify,
+            };
+            return report(&home, asked);
+        }
+        Some(Command::Sessions) => return report(&home, Report::Sessions),
         Some(Command::Worker) => {}
-        Some(Command::Spend) => print_spend(&home)?,
+        Some(Command::Spend) => return report(&home, Report::Spend),
         // With nothing asked for, the app: as a client of the daemon if there
         // is one, and by itself if there is not.
         None => match daemon(&home, TERMINAL)? {
@@ -283,100 +292,37 @@ fn worker() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn doctor(home: &Path, live: bool) -> Result<ExitCode> {
-    let mut checks = tiphys_core::doctor::run(home);
-    if live {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
-        checks.push(runtime.block_on(tiphys_core::doctor::live(
-            home,
-            &tiphys_core::llm::ChatConnect,
-        )));
-    }
-    for check in &checks {
-        let mark = if check.ok { "✓" } else { "✗" };
-        say!("{mark} {}: {}", check.name, check.detail);
-    }
-    let failed = checks.iter().filter(|check| !check.ok).count();
-    Ok(if failed == 0 {
+/// Prints a report: asked of the daemon if there is one, since an installed
+/// Tiphys keeps its state where its owner cannot read it, and made here if
+/// there is not.
+fn report(home: &Path, report: Report) -> Result<ExitCode> {
+    let made = match daemon(home, TERMINAL)? {
+        Some(client) => {
+            client.send(Request::Report(report))?;
+            loop {
+                match client.events.recv() {
+                    Ok(Event::Report { text, ok }) => break Rendered { text, ok },
+                    Ok(Event::Failed { message }) => return Err(Error::Config(message)),
+                    // What the daemon says to every client that attaches.
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(Error::Io(
+                            "the connection to the Tiphys daemon was lost".into(),
+                        ));
+                    }
+                }
+            }
+        }
+        None => {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
+            runtime.block_on(tiphys_core::report::render(home, &report, &ChatConnect))?
+        }
+    };
+    say!("{}", made.text);
+    Ok(if made.ok {
         ExitCode::SUCCESS
     } else {
-        say!("{failed} of {} checks did not pass.", checks.len());
         ExitCode::FAILURE
     })
-}
-
-fn print_log(home: &Path, count: usize, what: Option<LogCommand>) -> Result<()> {
-    let log = ActionLog::at(home);
-    match what {
-        None => {
-            let entries = log.entries()?;
-            if entries.is_empty() {
-                say!("The action log is empty.");
-            }
-            let skip = entries.len().saturating_sub(count);
-            for entry in &entries[skip..] {
-                say!("{}", log_line(entry));
-            }
-        }
-        Some(LogCommand::Show { seq }) => {
-            let entries = log.entries()?;
-            let entry = entries
-                .iter()
-                .find(|entry| entry.seq == seq)
-                .ok_or_else(|| Error::Config(format!("the action log has no entry {seq}")))?;
-            let json = serde_json::to_string_pretty(entry)
-                .map_err(|e| Error::Io(format!("cannot show the entry: {e}")))?;
-            say!("{json}");
-        }
-        Some(LogCommand::Verify) => {
-            let count = log.verify()?;
-            say!(
-                "{count} entries, each following from the one before. Nothing has been changed or removed."
-            );
-        }
-    }
-    Ok(())
-}
-
-/// One entry on one line: its number, when, how it was let through, whether
-/// it worked, and what it was.
-fn log_line(entry: &Entry) -> String {
-    let lower = |value: &dyn std::fmt::Debug| format!("{value:?}").to_lowercase();
-    format!(
-        "{:>5}  {}  {:<8}  {:<7}  {}  {}",
-        entry.seq,
-        entry.at.format("%Y-%m-%d %H:%M:%S"),
-        lower(&entry.gate),
-        entry
-            .class
-            .map_or_else(|| "-".to_string(), |class| lower(&class)),
-        if entry.ok { "ok    " } else { "failed" },
-        entry.summary,
-    )
-}
-
-fn print_sessions(home: &Path) -> Result<()> {
-    let sessions = session::list(home)?;
-    if sessions.is_empty() {
-        say!("No sessions yet.");
-    }
-    for meta in sessions {
-        say!(
-            "{}  {}  {}  {}",
-            meta.id,
-            meta.created.format("%Y-%m-%d %H:%M"),
-            meta.model,
-            meta.title
-        );
-    }
-    Ok(())
-}
-
-fn print_spend(home: &Path) -> Result<()> {
-    let (today, month) = spend::totals(home)?;
-    say!("Today       {today}");
-    say!("This month  {month}");
-    say!("Days and months are counted in UTC.");
-    Ok(())
 }

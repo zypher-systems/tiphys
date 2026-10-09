@@ -23,6 +23,7 @@ pub mod log;
 pub mod policy;
 pub mod prompt;
 pub mod proto;
+pub mod report;
 pub mod runner;
 pub mod session;
 pub mod settings;
