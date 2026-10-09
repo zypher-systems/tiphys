@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::files::{SHARED_DIR, SHARED_FILE, ensure_dir, write_atomic};
 use crate::llm::{Message, Role, ToolSpec};
-use crate::proto::Event;
+use crate::proto::{Event, StopReason};
 use crate::{Error, Result, jsonl};
 
 /// The directory under the state directory that holds the sessions.
@@ -32,6 +32,10 @@ const SYSTEM: &str = "system.md";
 const TOOLS: &str = "tools.json";
 const TRANSCRIPT: &str = "transcript.jsonl";
 const EVENTS: &str = "events.jsonl";
+/// How many events of a session a client is sent when it attaches.
+const HISTORY_EVENTS: usize = 400;
+/// What a turn is closed with when Tiphys stopped while it was running.
+pub const INTERRUPTED: &str = "Tiphys stopped while this turn was running";
 
 /// What is known about a session without reading its transcript.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -240,6 +244,26 @@ impl Session {
         Ok(missing.len())
     }
 
+    /// Closes a turn that was cut short. If the event file ends in the middle
+    /// of a turn, the process that was running it is gone, and nothing will
+    /// ever finish it; a client shown such a session would wait for ever.
+    /// Returns whether there was one.
+    pub fn close_interrupted(&mut self) -> Result<bool> {
+        let events: Vec<Stamped> = jsonl::read(&self.dir.join(EVENTS))?;
+        let open = match events.last() {
+            Some(last) => !matches!(last.event, Event::TurnFinished { .. }),
+            None => false,
+        };
+        if open {
+            self.answer_unanswered("not run: Tiphys stopped before this call was dealt with")?;
+            self.log(&Event::TurnFinished {
+                reason: StopReason::Failed,
+                error: Some(INTERRUPTED.into()),
+            })?;
+        }
+        Ok(open)
+    }
+
     fn write_meta(&self) -> Result<()> {
         let json = serde_json::to_vec_pretty(&self.meta)
             .map_err(|e| Error::Io(format!("cannot encode session meta: {e}")))?;
@@ -262,6 +286,36 @@ pub fn list(home: &Path) -> Result<Vec<Meta>> {
     // Ids are time-ordered, which settles two sessions made in one instant.
     sessions.sort_by(|a, b| (b.created, &b.id).cmp(&(a.created, &a.id)));
     Ok(sessions)
+}
+
+/// The session an audience was last in, if it has had one.
+pub fn latest(home: &Path, audience: &str) -> Result<Option<String>> {
+    Ok(list(home)?
+        .into_iter()
+        .find(|meta| meta.audience == audience)
+        .map(|meta| meta.id))
+}
+
+/// What happened in a session, for a client that has just attached: its
+/// durable events, oldest first. A long session is cut to its latest part,
+/// with a note where the cut is. A session that cannot be read has no history.
+pub fn history(home: &Path, id: &str) -> Vec<Event> {
+    let path = home.join(SESSIONS_DIR).join(id).join(EVENTS);
+    let events: Vec<Stamped> = jsonl::read(&path).unwrap_or_default();
+    let skipped = events.len().saturating_sub(HISTORY_EVENTS);
+    let mut history = Vec::with_capacity(events.len() - skipped + 1);
+    if skipped > 0 {
+        history.push(Event::Notice {
+            text: format!("{skipped} earlier events of this session are not shown."),
+        });
+    }
+    history.extend(
+        events
+            .into_iter()
+            .skip(skipped)
+            .map(|stamped| stamped.event),
+    );
+    history
 }
 
 fn read_meta(dir: &Path) -> Result<Option<Meta>> {
@@ -424,6 +478,92 @@ mod tests {
             .map(|m| m.id)
             .collect();
         assert_eq!(ids, [second.meta().id.clone(), first.meta().id.clone()]);
+    }
+
+    #[test]
+    fn a_turn_cut_short_is_closed_once_and_a_finished_one_is_left_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let mut session = Session::create(home.path(), opening()).unwrap();
+        assert!(!session.close_interrupted().unwrap());
+
+        session.push(Message::user("go")).unwrap();
+        session
+            .log(&Event::UserMessage { text: "go".into() })
+            .unwrap();
+        session
+            .push(Message::assistant("", vec![call("a")]))
+            .unwrap();
+        session
+            .log(&Event::Notice {
+                text: "working".into(),
+            })
+            .unwrap();
+        // The process dies here. Later, the session is opened again.
+        let mut reopened = Session::open(home.path(), &session.meta().id).unwrap();
+        assert!(reopened.close_interrupted().unwrap());
+        assert!(!reopened.close_interrupted().unwrap());
+
+        let events = history(home.path(), &session.meta().id);
+        assert_eq!(
+            events.last(),
+            Some(&Event::TurnFinished {
+                reason: StopReason::Failed,
+                error: Some(INTERRUPTED.into())
+            })
+        );
+        assert_eq!(events.len(), 3);
+        // The call it left open has its result, so the next turn can be sent.
+        assert_eq!(
+            reopened.messages().last().unwrap().tool_call_id.as_deref(),
+            Some("a")
+        );
+    }
+
+    #[test]
+    fn the_latest_session_is_found_per_audience_and_history_is_cut_to_its_end() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(latest(home.path(), "terminal").unwrap(), None);
+        let terminal = Session::create(home.path(), opening()).unwrap();
+        let mut chat = Session::create(
+            home.path(),
+            Opening {
+                audience: "telegram:42".into(),
+                ..opening()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            latest(home.path(), "terminal").unwrap(),
+            Some(terminal.meta().id.clone())
+        );
+        assert_eq!(
+            latest(home.path(), "telegram:42").unwrap(),
+            Some(chat.meta().id.clone())
+        );
+        assert_eq!(latest(home.path(), "telegram:7").unwrap(), None);
+
+        assert!(history(home.path(), &terminal.meta().id).is_empty());
+        assert!(history(home.path(), "0199aaaa-0000-7000-8000-000000000000").is_empty());
+        for n in 0..HISTORY_EVENTS + 25 {
+            chat.log(&Event::Notice {
+                text: format!("event {n}"),
+            })
+            .unwrap();
+        }
+        let events = history(home.path(), &chat.meta().id);
+        assert_eq!(events.len(), HISTORY_EVENTS + 1);
+        assert_eq!(
+            events[0],
+            Event::Notice {
+                text: "25 earlier events of this session are not shown.".into()
+            }
+        );
+        assert_eq!(
+            events[1],
+            Event::Notice {
+                text: "event 25".into()
+            }
+        );
     }
 
     #[test]

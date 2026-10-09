@@ -164,6 +164,9 @@ pub enum Event {
     },
     /// Where things stand, after a request that asked or changed it.
     State(State),
+    /// The conversation so far, for a client that has just attached or whose
+    /// session has just changed. It replaces whatever the client was showing.
+    History { events: Vec<Event> },
     /// The models a connection offers.
     Models { models: Vec<Model> },
     /// How a model's tool-call round trip went.
@@ -271,6 +274,7 @@ mod tests {
         assert!(Event::AssistantMessage { text: "a".into() }.is_durable());
         assert!(Event::Notice { text: "a".into() }.is_durable());
         assert!(!Event::State(State::default()).is_durable());
+        assert!(!Event::History { events: Vec::new() }.is_durable());
         assert!(
             !Event::Failed {
                 message: "a".into()

@@ -45,7 +45,7 @@ async fn turn(home: &Path, run: Run) -> Result<ExitCode> {
             connection: run.connection,
             model: run.model,
             resume,
-            audience: "terminal".into(),
+            audience: "oneshot".into(),
         },
     )
     .await?;

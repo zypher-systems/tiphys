@@ -338,6 +338,18 @@ pub fn apply(view: &mut View, event: &Event) -> Vec<Request> {
                 view.chat.activity = Activity::Idle;
             }
         },
+        // The conversation as the host has it replaces what is on the screen.
+        // What is being typed stays.
+        Event::History { events } => {
+            let input = std::mem::take(&mut view.chat.input);
+            view.chat = Chat {
+                input,
+                ..Chat::default()
+            };
+            for event in events {
+                view.chat.apply(event);
+            }
+        }
         turn_event => view.chat.apply(turn_event),
     }
     Vec::new()
@@ -674,13 +686,8 @@ fn run_command(view: &mut View, command: &str) -> Vec<Request> {
         _ if chat.busy => chat.items.push(Item::Notice(
             "A turn is running. Press esc to stop it first.".into(),
         )),
-        "new" => {
-            chat.items.clear();
-            chat.items.push(Item::Notice(
-                "A new session starts with your next message.".into(),
-            ));
-            return vec![Request::NewSession];
-        }
+        // The host answers with an empty conversation, which clears the screen.
+        "new" => return vec![Request::NewSession],
         "model" => match &view.state.default {
             Some(connection) => {
                 chat.items.push(Item::Notice(format!(
@@ -1180,7 +1187,8 @@ mod tests {
         view.chat.items.push(Item::Assistant("old".into()));
         type_text(&mut view, "/new");
         assert_eq!(press(&mut view, KeyCode::Enter), [Request::NewSession]);
-        assert_eq!(view.chat.items.len(), 1);
+        apply(&mut view, &Event::History { events: Vec::new() });
+        assert!(view.chat.items.is_empty());
 
         type_text(&mut view, "/connections");
         press(&mut view, KeyCode::Enter);
@@ -1312,6 +1320,61 @@ mod tests {
         );
         type_text(&mut view, "   ");
         assert!(press(&mut view, KeyCode::Enter).is_empty());
+    }
+
+    #[test]
+    fn a_replayed_conversation_replaces_the_screen_and_keeps_what_is_being_typed() {
+        let mut view = chatting();
+        view.chat.items.push(Item::Assistant("stale".into()));
+        type_text(&mut view, "half a thou");
+        let asked = Event::ApprovalRequested {
+            id: "w1".into(),
+            tool: "shell".into(),
+            summary: "run: sudo apt update".into(),
+            reason: String::new(),
+            why: "it runs as root".into(),
+            class: tiphys_core::policy::Class::System,
+            preview: None,
+        };
+        // A turn that is still going: it ends on a question nobody answered.
+        apply(
+            &mut view,
+            &Event::History {
+                events: vec![
+                    Event::UserMessage {
+                        text: "earlier".into(),
+                    },
+                    Event::AssistantMessage {
+                        text: "Done.".into(),
+                    },
+                    Event::Spend {
+                        cost: Some(0.5),
+                        usage: None,
+                    },
+                    Event::TurnFinished {
+                        reason: StopReason::Completed,
+                        error: None,
+                    },
+                    Event::UserMessage {
+                        text: "update the packages".into(),
+                    },
+                    Event::ToolStarted {
+                        id: "w1".into(),
+                        tool: "shell".into(),
+                        summary: "run: sudo apt update".into(),
+                        reason: String::new(),
+                    },
+                    asked,
+                ],
+            },
+        );
+        assert_eq!(view.chat.items.len(), 4);
+        assert_eq!(view.chat.items[0], Item::User("earlier".into()));
+        assert_eq!(view.chat.input.text(), "half a thou");
+        // The client is back in the turn: busy, with the question to answer.
+        assert!(view.chat.busy);
+        assert_eq!(view.chat.card.as_ref().unwrap().id, "w1");
+        assert_eq!(view.chat.cost, 0.5);
     }
 
     #[test]

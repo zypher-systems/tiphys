@@ -27,7 +27,7 @@ pub enum Resume {
     /// A new one.
     #[default]
     New,
-    /// The one most recently begun, or a new one if there is none.
+    /// The audience's most recent one, or a new one if it has none.
     Latest,
     /// This one.
     Id(String),
@@ -69,14 +69,18 @@ pub async fn agent_for(
     let resumed = match &start.resume {
         Resume::New => None,
         Resume::Id(id) => Some(Session::open(home, id)?),
-        Resume::Latest => match session::list(home)?.first() {
-            Some(latest) => Some(Session::open(home, &latest.id)?),
+        Resume::Latest => match session::latest(home, &start.audience)? {
+            Some(id) => Some(Session::open(home, &id)?),
             None => None,
         },
     };
     let session = match resumed {
-        // A session keeps the connection and model it began with.
-        Some(session) => session,
+        // A session keeps the connection and model it began with. If it was
+        // left in the middle of a turn, that turn is closed first.
+        Some(mut session) => {
+            session.close_interrupted()?;
+            session
+        }
         None => {
             let (name, connection) = pick_connection(&config, start.connection.as_deref())?;
             let model = start

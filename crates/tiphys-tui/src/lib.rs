@@ -23,11 +23,11 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use tiphys_core::host::{Host, Sink};
+use tiphys_core::host::{Host, Input, Sink};
 use tiphys_core::llm::ChatConnect;
 use tiphys_core::proto::{Event, Request};
 use tiphys_core::{Error, Result};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::unbounded_channel;
 
 pub mod draw;
 pub mod input;
@@ -41,23 +41,40 @@ const POLL: Duration = Duration::from_millis(40);
 /// How often the spinner moves.
 const TICK: Duration = Duration::from_millis(90);
 
-/// Runs the app until the owner leaves it.
+/// The one client an app running by itself has.
+const CLIENT: u64 = 1;
+
+/// Runs the app with the agent's host inside this process, until the owner
+/// leaves it.
 pub fn run(home: &Path, user_home: &Path) -> Result<()> {
-    let (requests, inbox) = unbounded_channel();
+    // Held until this returns: one host per state directory.
+    let _lock = tiphys_core::lock::take(home)?;
+    let (inbox, inputs) = unbounded_channel();
     let (outbox, events) = channel();
     let sink: Sink = Arc::new(move |event: &Event| {
         let _ = outbox.send(event.clone());
     });
-    let host = Host::new(home, user_home, "terminal", Arc::new(ChatConnect), sink);
+    let host = Host::new(home, user_home, "terminal", Arc::new(ChatConnect));
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
-    let serving = std::thread::spawn(move || runtime.block_on(host.run(inbox)));
+    let serving = std::thread::spawn(move || runtime.block_on(host.run(inputs)));
+    let _ = inbox.send(Input::Attach {
+        client: CLIENT,
+        sink,
+    });
+    let send = |request: Request| {
+        let _ = inbox.send(Input::Request {
+            client: CLIENT,
+            request,
+        });
+    };
 
-    let outcome = Screen::open().and_then(|mut screen| screen.run(&requests, &events));
+    let outcome = Screen::open().and_then(|mut screen| screen.run(&send, &events));
 
-    // With the requests closed the host stops any running turn and ends. The
-    // terminal is already back to normal by now, so waiting costs nothing.
-    drop(requests);
+    // With nothing left that can reach it, the host stops any running turn
+    // and ends. The terminal is already back to normal by now, so waiting
+    // costs nothing.
+    drop(inbox);
     let _ = serving.join();
     outcome
 }
@@ -81,15 +98,10 @@ impl Screen {
         Ok(Self { terminal })
     }
 
-    fn run(&mut self, requests: &UnboundedSender<Request>, events: &Receiver<Event>) -> Result<()> {
+    fn run(&mut self, request: &dyn Fn(Request), events: &Receiver<Event>) -> Result<()> {
         let io = |e: std::io::Error| Error::Io(format!("the terminal: {e}"));
-        let send = |sent: Vec<Request>| {
-            for request in sent {
-                let _ = requests.send(request);
-            }
-        };
+        let send = |sent: Vec<Request>| sent.into_iter().for_each(request);
         let mut view = View::default();
-        send(vec![Request::Hello]);
         let mut dirty = true;
         let mut ticked = Instant::now();
         while !view.quit {
