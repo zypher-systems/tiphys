@@ -6,8 +6,8 @@
 //! client sends requests and the daemon sends events.
 //!
 //! ```text
-//! → {"frame":"hello","protocol":1,"version":"0.1.0","audience":"terminal"}
-//! ← {"frame":"hello","protocol":1,"version":"0.1.0"}
+//! → {"frame":"hello","protocol":2,"version":"0.1.0","audience":"terminal"}
+//! ← {"frame":"hello","protocol":2,"version":"0.1.0"}
 //! ← {"frame":"event","event":{"kind":"state","connections":[]}}
 //! → {"frame":"request","request":{"kind":"prompt","text":"how full is the disk?"}}
 //! ← {"frame":"event","event":{"kind":"user_message","text":"how full is the disk?"}}
@@ -25,7 +25,7 @@ use crate::proto::{Event, Request};
 
 /// The version of this protocol. A client and a daemon that differ do not
 /// try to understand each other.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The variable that says where the socket is, for both sides.
 pub const SOCKET_ENV: &str = "TIPHYS_SOCKET";
@@ -169,7 +169,7 @@ mod tests {
         };
         assert_eq!(
             line(&hello),
-            "{\"frame\":\"hello\",\"protocol\":1,\"version\":\"0.1.0\",\"audience\":\"terminal\"}\n"
+            "{\"frame\":\"hello\",\"protocol\":2,\"version\":\"0.1.0\",\"audience\":\"terminal\"}\n"
         );
         let request = ClientFrame::Request {
             request: Request::Prompt {

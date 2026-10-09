@@ -54,6 +54,12 @@ choose, and only then saves it.
   Anything else shows a card first: `sudo`, packages and services, writing outside its home, files
   that usually hold a secret, scripts and programs whose effects cannot be read off the command
   line. Only `y` approves. A short list of things is refused whoever asks.
+- **Telegram.** `/telegram` in the app sets up a chat bot. Ask @BotFather in Telegram for a bot,
+  paste its token into the masked field, then press `p`: the app shows a code, you send it to the
+  bot from your own Telegram account, and the app asks whether that was you. From then on the bot
+  answers you, in a conversation of its own, and nobody else: anyone not paired gets no reply at
+  all. What has to ask arrives with Approve and Deny buttons. `/new` starts a fresh conversation
+  and `/stop` stops what is running. The server opens no port for any of this.
 - **`tiphys -p "..."`** runs one turn without the app and prints the answer. Nobody is there to
   approve anything, so only what runs without asking runs. `-c` carries on the last such run.
 - **`tiphys log`** lists every tool call and how it came to run or not. `tiphys log verify` checks
@@ -80,8 +86,6 @@ trying Tiphys out, not for leaving it running. `tiphys daemon run` runs the daem
 
 ## What it will be
 
-- **Chat.** Telegram first, by long polling, so the server opens no inbound port. Only accounts on
-  an allowlist are answered, and approvals arrive as buttons.
 - **Scheduled jobs** that run inside a scope you approved and deliver a report to your chat.
 - **Memory** kept per chat, and skills, as plain Markdown files.
 
@@ -92,7 +96,7 @@ trying Tiphys out, not for leaving it running. `tiphys daemon run` runs the daem
 | `crates/tiphys-core` | Config, connections and keys, the provider layer, the agent loop, tools, action policy, action log, sessions |
 | `crates/tiphys-tui` | The terminal app |
 | `crates/tiphys-cli` | The `tiphys` binary |
-| `crates/tiphys-daemon` | The daemon, its socket and the service install; later chat adapters and the job runner |
+| `crates/tiphys-daemon` | The daemon, its socket, the service install and the Telegram adapter; later the job runner |
 
 ## License
 

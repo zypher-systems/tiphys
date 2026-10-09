@@ -90,6 +90,19 @@ pub struct Config {
     pub daemon: Daemon,
     /// How much may be spent.
     pub spend: Spend,
+    /// Who the agent answers on Telegram.
+    pub telegram: Telegram,
+}
+
+/// Telegram. The bot's token is not here: it is a key, entered in the app.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Telegram {
+    /// The numeric ids of the Telegram users who are answered. Anyone else
+    /// gets nothing. Pairing in the app adds to this.
+    pub allow: Vec<i64>,
+    /// Where the Bot API is, for a server of your own. Telegram's when unset.
+    pub api: Option<String>,
 }
 
 /// How much may be spent.

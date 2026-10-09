@@ -38,16 +38,26 @@ beyond the first, more than one owner.
 
 ## Now
 
-**M2: Telegram.** Under way. M0 and M1 are done and released; the last release is 0.1.1.
+**M2: Telegram.** Built, and waiting for its first run against the real Telegram. M0 and M1 are
+done and released; the last release is 0.1.1.
 
 - [x] Compaction: before a conversation is more than the model can hold, its oldest part is left
       out of what the model is sent: old tool results first, then whole turns. Nothing is deleted.
-- [ ] Telegram in the daemon: long polling, one conversation per chat, an allowlist, approvals as
+- [x] Telegram in the daemon: long polling, one conversation per chat, an allowlist, approvals as
       buttons, `/new` and `/stop`.
-- [ ] Setup in the app: the bot token in a masked field, and pairing by sending the bot a message.
+- [x] Setup in the app: the bot token in a masked field, and pairing by sending the bot a code.
+- [ ] Checked on a real server with a real bot.
 
 Done when: a stranger gets nothing, you get an answer, a request that has to ask shows buttons, an
 unanswered one is denied after 300 seconds, and `/stop` and `/new` work.
+
+Known gaps in Telegram:
+
+- Text only, and plain: a photo or a file gets "Tiphys reads text only for now", and a model that
+  writes Markdown anyway shows its asterisks.
+- A user is taken off the allowlist by editing `settings.toml`; the app only adds.
+- Everything was built against a stand-in for the Bot API. Rate limits and odd updates from the
+  real one have not been met.
 
 Found on the first installed server, and not yet dealt with:
 

@@ -299,6 +299,13 @@ impl Host {
                 catalog::store(&self.home, &connection, &models)?;
                 self.reply(client, &Event::Models { models });
             }
+            Request::Telegram(_) => {
+                return Err(Error::Config(
+                    "Telegram is run by the daemon, and this Tiphys is running by itself; install \
+                     it as a service, or start `tiphys daemon run`"
+                        .into(),
+                ));
+            }
             Request::Report(report) => {
                 let made =
                     crate::report::render(&self.home, &report, self.connect.as_ref()).await?;

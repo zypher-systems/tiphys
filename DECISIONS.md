@@ -2,6 +2,32 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: Telegram answers whoever sent it a code from the app, and nobody else
+- **By:** design, in M2. The owner chose Telegram as the first chat surface, and that its token is entered in the app.
+- **Decision:**
+  - The daemon reads the bot by long polling. The bot's token is entered in the app's masked field, checked with Telegram, and stored in the key store as `_telegram`.
+  - Only users on `[telegram] allow` are answered, and only in a private chat. Everyone else gets no reply of any kind.
+  - A user gets onto the list by pairing: the app shows a six-digit code, the user sends it to the bot, the app shows who that was, and the owner says yes in the app. `Allow` is accepted only for the user pairing found.
+  - Each chat is an audience of its own, `telegram:<chat>`, with its own session.
+  - Approvals are buttons under the question. Only `y` in the app or a press of Approve by an allowed user is a yes; no answer in 300 seconds is a no.
+  - A message that was waiting when the daemon started is not acted on. The chat is told once.
+- **Chosen vs rejected:**
+  - Rejected a webhook: it needs an inbound port, a certificate and a public name. Long polling needs none.
+  - Rejected asking the owner for their numeric Telegram id: nobody knows theirs, and the usual way to find it is to ask a stranger's bot.
+  - Rejected "the first to write to the bot is the owner": a bot's username can be guessed or found, and the first writer would then drive the server.
+  - Rejected showing every stranger who writes during pairing: the owner would be picking from a list an attacker can add to. With a code, only someone who can see the app can become the candidate.
+  - Rejected answering strangers with "not allowed": it confirms something is there and invites probing.
+  - Rejected storing the token under the plain name `telegram`: a connection may be called that, and the two keys would be one file.
+  - Rejected acting on late messages: "restart the web server" sent before a four-hour outage is not what the owner wants at the end of it. Whether a message is late is decided without a clock, by asking Telegram once without waiting when the daemon starts.
+- **Why:** Whoever the bot answers can have the agent act on the server. The list of those people has to be short, explicit, and filled in a way that cannot be raced.
+- **Where:** `tiphys-daemon/src/telegram/` (`mod.rs` the adapter, `api.rs` the Bot API, `render.rs` a turn as messages), `tiphys-daemon/src/hosts.rs`, `tiphys-core/src/proto.rs` (`TelegramRequest`, `TelegramState`), `tiphys-tui/src/view.rs` (`Telegram`).
+- **Residual risk:**
+  - Telegram sees every message, and whoever holds the bot's token can read what is sent to it and speak as it. The token is as sensitive as a model key and is stored the same way.
+  - A Telegram account that is taken over is an allowed user. Actions that ask still ask, but changes inside the agent's home run. `[approvals] change = "ask"` narrows that.
+  - A message sent in the seconds a restart takes is declined as late, and has to be sent again.
+  - A user can be taken off the list only by editing `settings.toml`; the app adds and does not remove.
+  - The adapter is tested against a stand-in for the Bot API. The real one has been used by nobody yet.
+
 ### 2026-10-09: A long conversation is cut down by rule, not summarised
 - **By:** design, at the start of M2.
 - **Decision:**

@@ -241,7 +241,8 @@ the state directory, and it holds a lock on it; an app started by itself on the 
 refused.
 
 - **Audiences.** There is one host per audience, and each has its own conversation: `terminal` for
-  the owner at the app, `oneshot` for `tiphys -p`. Chat adapters will be audiences too.
+  the owner at the app, `oneshot` for `tiphys -p`, and `telegram:<chat>` for each Telegram chat.
+  A host is started the first time something needs it.
 - **Clients.** A client connects, says which audience it is talking as, and is attached to that
   host. It is sent where things stand and the conversation so far, then everything that happens.
   When it leaves, the host and any turn it is running carry on.
@@ -263,6 +264,38 @@ refused.
 
 A typed key is the one secret that crosses the socket, from the app to the daemon, which stores
 it. Nothing sends one the other way.
+
+### 9.2 Telegram (M2)
+
+The daemon reads a bot's messages by long polling: it asks Telegram for what is new and waits for
+the answer. The server opens no port and needs no address of its own.
+
+- **The token** is a key. It is typed into a masked field in the app (`/telegram`), checked with
+  Telegram, and stored as `keys/_telegram`, a name no connection can have. A token Telegram does
+  not confirm is not stored, and the one in use stays in use.
+- **Who is answered.** A user on the allowlist, `[telegram] allow`, in a private chat. Anyone else
+  gets nothing: no error, no "typing", no answer to a button. Groups and channels are ignored
+  whoever writes in them.
+- **Pairing** puts a user on the allowlist without the owner knowing their Telegram id. The app
+  asks the daemon to open pairing and shows a six-digit code, good for ten minutes. Whoever sends
+  the bot that code first is shown in the app by name, username and id, and is allowed only when
+  the owner says yes there. A message that is not the code shows nothing; twenty of them end
+  pairing.
+- **Conversations.** Each chat is its own audience, with its own host and session. A message sent
+  while a turn runs waits its turn. `/new` starts a fresh session; `/stop` cancels what is running.
+- **Questions.** An action that has to ask is a message with Approve and Deny buttons. A press
+  counts from an allowed user, on the message the question was asked in. Once answered, or after
+  300 seconds with no answer, the message shows the outcome and loses its buttons.
+- **What a turn looks like.** The agent's messages are sent as they are finished, split where they
+  are longer than a Telegram message. What it does is one message per turn, a list edited as tools
+  start and finish. Text is plain: the session's system prompt tells the model it is in a chat and
+  to write without Markdown.
+- **Late messages.** The number of the next update is kept in `telegram.offset`, written after an
+  update is dealt with, so a restart neither repeats nor loses one. What the owner sent while the
+  daemon was not running is not acted on when it starts; the chat is told so once.
+- **When Telegram cannot be reached** the daemon asks again after a few seconds. A refused token,
+  or another program reading the same bot, is shown on the app's Telegram screen and tried again
+  every minute.
 
 ---
 

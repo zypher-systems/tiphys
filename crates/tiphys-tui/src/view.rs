@@ -10,7 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tiphys_core::config::{Connection, valid_name};
 use tiphys_core::keys::Secret;
 use tiphys_core::llm::Model;
-use tiphys_core::proto::{Draft, Event, Request, State, StopReason};
+use tiphys_core::proto::{
+    Draft, Event, Request, State, StopReason, TelegramRequest, TelegramState,
+};
 
 use crate::input::Input;
 
@@ -18,7 +20,7 @@ const FIRST_NAME: &str = "openrouter";
 const FIRST_ADDRESS: &str = "https://openrouter.ai/api/v1";
 
 const HELP: &str = "/new starts a fresh session · /model picks another model · \
-/connections sets up or changes a connection · /quit leaves";
+/connections sets up or changes a connection · /telegram sets up the chat bot · /quit leaves";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
@@ -37,6 +39,7 @@ pub enum Screen {
     Loading,
     Setup(Setup),
     Models(Box<Picker>),
+    Telegram(Telegram),
     Chat,
 }
 
@@ -146,6 +149,36 @@ impl Setup {
             connection,
             key: Secret::new(self.key.text()),
         })
+    }
+}
+
+/// The screen Telegram is set up on: the bot's token, and who it answers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Telegram {
+    /// Where things stand, once the daemon has said.
+    pub state: Option<TelegramState>,
+    /// The bot's token as it is typed. It is sent once and not kept here.
+    pub token: Input,
+    /// Whether the token field is open.
+    pub entering: bool,
+    /// Whether the owner was asked if the bot should really go.
+    pub removing: bool,
+    pub status: Status,
+}
+
+impl Telegram {
+    fn opening() -> Self {
+        Self {
+            state: None,
+            token: Input::masked(),
+            entering: false,
+            removing: false,
+            status: Status::Working("Asking the daemon…".into()),
+        }
+    }
+
+    fn has_bot(&self) -> bool {
+        self.state.as_ref().is_some_and(|state| state.bot.is_some())
     }
 }
 
@@ -329,7 +362,19 @@ pub fn apply(view: &mut View, event: &Event) -> Vec<Request> {
                 }];
             }
         }
+        Event::Telegram(state) => {
+            // Told while on another screen, it can wait: the screen asks
+            // again when it is opened.
+            if let Screen::Telegram(telegram) = &mut view.screen {
+                // With no bot yet, the first thing to do is give its token.
+                telegram.entering = state.bot.is_none();
+                telegram.removing = false;
+                telegram.status = Status::Idle;
+                telegram.state = Some(state.clone());
+            }
+        }
         Event::Failed { message } => match &mut view.screen {
+            Screen::Telegram(telegram) => telegram.status = Status::Failed(message.clone()),
             Screen::Setup(form) => form.status = Status::Failed(message.clone()),
             Screen::Models(picker) => picker.status = Status::Failed(message.clone()),
             _ => {
@@ -516,6 +561,13 @@ pub fn key(view: &mut View, key: KeyEvent) -> Vec<Request> {
                 Vec::new()
             }
         },
+        Screen::Telegram(telegram) => match telegram_key(telegram, key, ctrl) {
+            Leave::Stay(requests) => requests,
+            Leave::Back => {
+                view.screen = Screen::Chat;
+                Vec::new()
+            }
+        },
         Screen::Chat => chat_key(view, key, ctrl),
     }
 }
@@ -531,6 +583,13 @@ pub fn paste(view: &mut View, text: &str) {
         Screen::Models(picker) if !matches!(picker.status, Status::Working(_)) => {
             picker.filter.insert(text);
             picker.selected = 0;
+        }
+        // A paste goes into the token field and nowhere else on this screen:
+        // it never answers a question.
+        Screen::Telegram(telegram)
+            if telegram.entering && !matches!(telegram.status, Status::Working(_)) =>
+        {
+            telegram.token.insert(text);
         }
         // A pasted block becomes one line: line breaks turn into spaces. A
         // paste never answers a question, even one that contains a `y`.
@@ -631,6 +690,87 @@ fn picker_key(picker: &mut Picker, key: KeyEvent, ctrl: bool) -> Leave {
     Leave::Stay(Vec::new())
 }
 
+fn telegram_key(telegram: &mut Telegram, key: KeyEvent, ctrl: bool) -> Leave {
+    let ask = |telegram: &mut Telegram, doing: &str, request: TelegramRequest| {
+        telegram.status = Status::Working(doing.into());
+        Leave::Stay(vec![Request::Telegram(request)])
+    };
+    if matches!(telegram.status, Status::Working(_)) {
+        return Leave::Stay(Vec::new());
+    }
+    // The daemon has not said where things stand: there is nothing to do
+    // here but leave.
+    let Some(state) = &telegram.state else {
+        return match key.code {
+            KeyCode::Esc => Leave::Back,
+            _ => Leave::Stay(Vec::new()),
+        };
+    };
+    if telegram.entering {
+        match key.code {
+            KeyCode::Esc if telegram.has_bot() => {
+                telegram.token.take();
+                telegram.entering = false;
+                telegram.status = Status::Idle;
+            }
+            KeyCode::Esc => return Leave::Back,
+            KeyCode::Enter => {
+                // The field is emptied as it is sent: the token is not kept
+                // on the screen's side.
+                if let Some(token) = Secret::new(&telegram.token.take()) {
+                    return ask(
+                        telegram,
+                        "Checking the token with Telegram…",
+                        TelegramRequest::SetToken { token },
+                    );
+                }
+            }
+            _ => {
+                if edit(&mut telegram.token, key, ctrl) {
+                    telegram.status = Status::Idle;
+                }
+            }
+        }
+        return Leave::Stay(Vec::new());
+    }
+    if telegram.removing {
+        telegram.removing = false;
+        return match key.code {
+            KeyCode::Char('y' | 'Y') => ask(telegram, "Removing the bot…", TelegramRequest::Remove),
+            _ => Leave::Stay(Vec::new()),
+        };
+    }
+    // Someone sent the code: the keys answer whether it is the owner. Only
+    // an explicit `y` is a yes.
+    if let Some(found) = &state.candidate {
+        return match key.code {
+            KeyCode::Char('y' | 'Y') => {
+                let user = found.id;
+                ask(telegram, "Saving…", TelegramRequest::Allow { user })
+            }
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                ask(telegram, "Starting over…", TelegramRequest::Pair)
+            }
+            _ => Leave::Stay(Vec::new()),
+        };
+    }
+    match key.code {
+        KeyCode::Esc => Leave::Back,
+        KeyCode::Char('p' | 'P') => ask(telegram, "Opening pairing…", TelegramRequest::Pair),
+        KeyCode::Char('t' | 'T') => {
+            telegram.entering = true;
+            telegram.status = Status::Idle;
+            Leave::Stay(Vec::new())
+        }
+        KeyCode::Char('r' | 'R') => {
+            telegram.removing = true;
+            telegram.status = Status::Idle;
+            Leave::Stay(Vec::new())
+        }
+        _ => Leave::Stay(Vec::new()),
+    }
+}
+
 fn chat_key(view: &mut View, key: KeyEvent, ctrl: bool) -> Vec<Request> {
     let chat = &mut view.chat;
     // A question is on the screen: the keys answer it. Only an explicit `y`
@@ -703,6 +843,10 @@ fn run_command(view: &mut View, command: &str) -> Vec<Request> {
             )),
         },
         "connections" | "connection" => view.screen = Screen::Setup(Setup::from_state(&view.state)),
+        "telegram" => {
+            view.screen = Screen::Telegram(Telegram::opening());
+            return vec![Request::Telegram(TelegramRequest::Status)];
+        }
         other => chat
             .items
             .push(Item::Notice(format!("There is no /{other}. {HELP}"))),
@@ -713,7 +857,7 @@ fn run_command(view: &mut View, command: &str) -> Vec<Request> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tiphys_core::proto::{ConnectionInfo, SessionInfo};
+    use tiphys_core::proto::{Candidate, ConnectionInfo, SessionInfo};
 
     fn press(view: &mut View, code: KeyCode) -> Vec<Request> {
         key(view, KeyEvent::new(code, KeyModifiers::NONE))
@@ -1376,6 +1520,150 @@ mod tests {
         assert!(view.chat.busy);
         assert_eq!(view.chat.card.as_ref().unwrap().id, "w1");
         assert_eq!(view.chat.cost, 0.5);
+    }
+
+    fn telegram_state(bot: bool) -> TelegramState {
+        TelegramState {
+            bot: bot.then(|| "tiphys_bot".to_string()),
+            ..TelegramState::default()
+        }
+    }
+
+    /// The Telegram screen, opened from the chat and told where things stand.
+    fn on_telegram(state: TelegramState) -> View {
+        let mut view = chatting();
+        type_text(&mut view, "/telegram");
+        assert_eq!(
+            press(&mut view, KeyCode::Enter),
+            [Request::Telegram(TelegramRequest::Status)]
+        );
+        // Until the daemon answers, no key does anything but leave.
+        assert!(press(&mut view, KeyCode::Char('p')).is_empty());
+        apply(&mut view, &Event::Telegram(state));
+        view
+    }
+
+    fn telegram(view: &View) -> &Telegram {
+        match &view.screen {
+            Screen::Telegram(telegram) => telegram,
+            other => panic!("not the Telegram screen: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bot_is_set_up_by_pasting_its_token_which_is_sent_once_and_not_kept() {
+        let mut view = on_telegram(telegram_state(false));
+        assert!(telegram(&view).entering);
+        // Enter on an empty field sends nothing.
+        assert!(press(&mut view, KeyCode::Enter).is_empty());
+
+        paste(&mut view, "123456:secret-token\n");
+        let sent = press(&mut view, KeyCode::Enter);
+        let token = Secret::new("123456:secret-token").unwrap();
+        assert_eq!(
+            sent,
+            [Request::Telegram(TelegramRequest::SetToken { token })]
+        );
+        assert!(telegram(&view).token.is_empty());
+        assert!(matches!(telegram(&view).status, Status::Working(_)));
+        // While it is being checked, keys and pastes wait.
+        paste(&mut view, "more");
+        assert!(press(&mut view, KeyCode::Enter).is_empty());
+        assert!(telegram(&view).token.is_empty());
+
+        // Telegram refuses it: said on this screen, and the field is open again.
+        apply(
+            &mut view,
+            &Event::Failed {
+                message: "Telegram does not accept this bot token".into(),
+            },
+        );
+        assert!(
+            matches!(&telegram(&view).status, Status::Failed(why) if why.contains("does not accept"))
+        );
+        assert!(
+            view.chat
+                .items
+                .iter()
+                .all(|item| !matches!(item, Item::Error(_)))
+        );
+
+        // Accepted: the field closes.
+        apply(&mut view, &Event::Telegram(telegram_state(true)));
+        assert!(!telegram(&view).entering);
+        assert_eq!(telegram(&view).status, Status::Idle);
+        // With no bot, esc leaves the screen; with one, esc closes the field.
+        press(&mut view, KeyCode::Char('t'));
+        assert!(telegram(&view).entering);
+        press(&mut view, KeyCode::Esc);
+        assert!(!telegram(&view).entering);
+        press(&mut view, KeyCode::Esc);
+        assert_eq!(view.screen, Screen::Chat);
+    }
+
+    #[test]
+    fn pairing_shows_who_sent_the_code_and_only_y_lets_them_in() {
+        let mut view = on_telegram(telegram_state(true));
+        assert_eq!(
+            press(&mut view, KeyCode::Char('p')),
+            [Request::Telegram(TelegramRequest::Pair)]
+        );
+        apply(
+            &mut view,
+            &Event::Telegram(TelegramState {
+                code: Some("483920".into()),
+                ..telegram_state(true)
+            }),
+        );
+        // The code arrives from someone.
+        let found = Candidate {
+            id: 42,
+            name: "Ada".into(),
+            username: Some("ada".into()),
+        };
+        let with_candidate = TelegramState {
+            candidate: Some(found),
+            ..telegram_state(true)
+        };
+        apply(&mut view, &Event::Telegram(with_candidate.clone()));
+
+        // Enter, a paste with a y in it, and other keys are not a yes.
+        assert!(press(&mut view, KeyCode::Enter).is_empty());
+        paste(&mut view, "y");
+        assert!(press(&mut view, KeyCode::Char('p')).is_empty());
+        // No starts pairing over, with a new code.
+        assert_eq!(
+            press(&mut view, KeyCode::Char('n')),
+            [Request::Telegram(TelegramRequest::Pair)]
+        );
+        apply(&mut view, &Event::Telegram(with_candidate));
+        assert_eq!(
+            press(&mut view, KeyCode::Char('y')),
+            [Request::Telegram(TelegramRequest::Allow { user: 42 })]
+        );
+    }
+
+    #[test]
+    fn removing_the_bot_asks_first() {
+        let mut view = on_telegram(telegram_state(true));
+        assert!(press(&mut view, KeyCode::Char('r')).is_empty());
+        assert!(telegram(&view).removing);
+        // Anything but y calls it off.
+        assert!(press(&mut view, KeyCode::Enter).is_empty());
+        assert!(!telegram(&view).removing);
+        press(&mut view, KeyCode::Char('r'));
+        assert_eq!(
+            press(&mut view, KeyCode::Char('y')),
+            [Request::Telegram(TelegramRequest::Remove)]
+        );
+    }
+
+    #[test]
+    fn news_about_telegram_on_another_screen_changes_nothing() {
+        let mut view = chatting();
+        let before = view.clone();
+        apply(&mut view, &Event::Telegram(telegram_state(true)));
+        assert_eq!(view, before);
     }
 
     #[test]

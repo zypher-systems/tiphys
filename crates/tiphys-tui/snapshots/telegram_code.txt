@@ -1,0 +1,20 @@
+
+ Telegram
+
+   Bot       @tiphys_bot
+   Answers   nobody yet
+
+ From the Telegram account Tiphys should answer, send @tiphys_bot this code:
+
+     483920
+
+ It is good for ten minutes. Whoever sends it is shown here, and is answered
+ only once you say yes.
+
+
+
+ p new code · esc back · ctrl+c quit
+
+
+
+

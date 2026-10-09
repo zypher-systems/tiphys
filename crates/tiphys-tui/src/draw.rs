@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::input::Input;
 use crate::view::{
-    Activity, Card, Chat, Field, Item, Picker, Screen, Setup, Status, ToolState, View,
+    Activity, Card, Chat, Field, Item, Picker, Screen, Setup, Status, Telegram, ToolState, View,
 };
 use crate::wrap::{fit, wrap};
 
@@ -47,6 +47,7 @@ pub fn draw(view: &View, frame: &mut Frame) {
         }
         Screen::Setup(form) => draw_setup(form, view.tick, frame, column(area)),
         Screen::Models(picker) => draw_models(picker, view.tick, frame, column(area)),
+        Screen::Telegram(telegram) => draw_telegram(telegram, view.tick, frame, column(area)),
         Screen::Chat => draw_chat(view, frame, area),
     }
 }
@@ -170,6 +171,128 @@ fn draw_setup(form: &Setup, tick: u64, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
     if let Some((x, y)) = cursor
         && !matches!(form.status, Status::Working(_))
+    {
+        place_cursor(frame, area, x, y);
+    }
+}
+
+fn draw_telegram(telegram: &Telegram, tick: u64, frame: &mut Frame, area: Rect) {
+    let width = area.width as usize;
+    let para = |text: &str, style: Style| -> Vec<Line<'static>> {
+        wrap(text, width)
+            .into_iter()
+            .map(|line| Line::styled(line, style))
+            .collect()
+    };
+    let mut lines = vec![
+        Line::default(),
+        Line::styled("Telegram", bold()),
+        Line::default(),
+    ];
+    let mut cursor = None;
+    let mut keys = "esc back · ctrl+c quit";
+
+    if let Some(state) = &telegram.state {
+        let bot = state.bot.as_ref().map(|bot| format!("@{bot}"));
+        if let Some(bot) = &bot {
+            let answers = if state.allowed.is_empty() {
+                "nobody yet".to_string()
+            } else {
+                let ids: Vec<String> = state.allowed.iter().map(|id| id.to_string()).collect();
+                format!("Telegram user {}", ids.join(", "))
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Bot       ", dim()),
+                Span::raw(bot.clone()),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Answers   ", dim()),
+                Span::raw(fit(&answers, width.saturating_sub(12))),
+            ]));
+            lines.push(Line::default());
+        }
+        if let Some(problem) = &state.problem {
+            lines.extend(para(&format!("✗ {problem}"), bad()));
+            lines.push(Line::default());
+        }
+
+        if telegram.entering {
+            let intro = "Talk to Tiphys from a Telegram chat. In Telegram, ask @BotFather for a \
+                         new bot, and paste the token it gives you here.";
+            lines.extend(para(intro, Style::new()));
+            lines.push(Line::default());
+            let label = "Bot token ";
+            let (shown, column) = telegram
+                .token
+                .visible(width.saturating_sub(label.len() + 4));
+            cursor = Some((label.len() + 2 + column, lines.len()));
+            lines.push(Line::from(vec![
+                Span::styled("› ", accent()),
+                Span::styled(label, bold()),
+                Span::raw(shown),
+            ]));
+            lines.push(Line::default());
+            let promise = "The token is checked with Telegram, then stored like a key: in a \
+                           file only Tiphys can read, and not shown again.";
+            lines.extend(para(promise, dim()));
+            keys = "enter check and save · esc back · ctrl+c quit";
+        } else if telegram.removing {
+            lines.extend(para(
+                "Remove the bot? Tiphys forgets its token and stops answering on Telegram. \
+                 Who it answers is kept.",
+                asking(),
+            ));
+            keys = "y remove · any other key keeps it";
+        } else if let Some(found) = &state.candidate {
+            let who = match &found.username {
+                Some(username) => {
+                    format!("{} (@{username}, Telegram user {})", found.name, found.id)
+                }
+                None => format!("{} (Telegram user {})", found.name, found.id),
+            };
+            lines.extend(para(&format!("The code came from {who}."), bold()));
+            lines.push(Line::default());
+            lines.extend(para(
+                "Is that you? Whoever is answered here can have Tiphys act on this server.",
+                asking(),
+            ));
+            keys = "y yes, answer this user · n no, start over";
+        } else if let Some(code) = &state.code {
+            let bot = bot.unwrap_or_else(|| "the bot".into());
+            lines.extend(para(
+                &format!("From the Telegram account Tiphys should answer, send {bot} this code:"),
+                Style::new(),
+            ));
+            lines.push(Line::default());
+            lines.push(Line::styled(
+                format!("    {code}"),
+                accent().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::default());
+            lines.extend(para(
+                "It is good for ten minutes. Whoever sends it is shown here, and is answered \
+                 only once you say yes.",
+                dim(),
+            ));
+            keys = "p new code · esc back · ctrl+c quit";
+        } else {
+            let hint = if state.allowed.is_empty() {
+                "The bot answers nobody yet. Press p to pair your Telegram account with it."
+            } else {
+                "Anyone else who writes to the bot gets no answer at all."
+            };
+            lines.extend(para(hint, dim()));
+            keys = "p pair a user · t change the token · r remove the bot · esc back";
+        }
+        lines.push(Line::default());
+    }
+    lines.extend(status_lines(&telegram.status, tick, width));
+    lines.push(Line::default());
+    lines.push(Line::styled(fit(keys, width), dim()));
+
+    frame.render_widget(Paragraph::new(lines), area);
+    if let Some((x, y)) = cursor
+        && !matches!(telegram.status, Status::Working(_))
     {
         place_cursor(frame, area, x, y);
     }
@@ -543,7 +666,9 @@ mod tests {
     use crate::view::{apply, paste};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use tiphys_core::proto::{ConnectionInfo, Event, SessionInfo, State, StopReason};
+    use tiphys_core::proto::{
+        Candidate, ConnectionInfo, Event, SessionInfo, State, StopReason, TelegramState,
+    };
     use tiphys_core::spend::Rates;
 
     /// Draws a view and returns the screen as text, with the cursor's place.
@@ -712,6 +837,74 @@ mod tests {
             },
         );
         check("setup_failed", &view);
+    }
+
+    /// The Telegram screen, told where things stand.
+    fn telegram(state: TelegramState) -> View {
+        let mut view = chatting();
+        view.screen = Screen::Telegram(crate::view::Telegram {
+            state: None,
+            token: Input::masked(),
+            entering: false,
+            removing: false,
+            status: Status::Idle,
+        });
+        apply(&mut view, &Event::Telegram(state));
+        view
+    }
+
+    fn with_bot() -> TelegramState {
+        TelegramState {
+            bot: Some("tiphys_bot".into()),
+            ..TelegramState::default()
+        }
+    }
+
+    #[test]
+    fn telegram_with_no_bot_asks_for_its_token_and_draws_it_as_dots() {
+        let mut view = telegram(TelegramState::default());
+        check("telegram_token", &view);
+        paste(&mut view, "123456:secret-token");
+        let (screen, _) = render(&view, 80, 20);
+        assert!(!screen.contains("secret"), "{screen}");
+        assert!(screen.contains("Bot token •••••••••••••••••••"), "{screen}");
+    }
+
+    #[test]
+    fn telegram_pairing_shows_the_code_then_who_sent_it() {
+        let code = TelegramState {
+            code: Some("483920".into()),
+            ..with_bot()
+        };
+        check("telegram_code", &telegram(code));
+        let found = Candidate {
+            id: 42,
+            name: "Ada".into(),
+            username: Some("ada".into()),
+        };
+        let asked = TelegramState {
+            candidate: Some(found),
+            ..with_bot()
+        };
+        check("telegram_candidate", &telegram(asked));
+    }
+
+    #[test]
+    fn telegram_once_set_up_shows_who_is_answered_and_any_problem() {
+        let paired = TelegramState {
+            allowed: vec![42],
+            ..with_bot()
+        };
+        check("telegram_paired", &telegram(paired.clone()));
+        let troubled = TelegramState {
+            problem: Some("something else is already reading this bot's messages; a bot can serve one Tiphys at a time".into()),
+            ..paired
+        };
+        let (screen, _) = render(&telegram(troubled), 80, 20);
+        assert!(
+            screen.contains("✗ something else is already reading"),
+            "{screen}"
+        );
     }
 
     #[test]

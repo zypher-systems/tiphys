@@ -128,6 +128,33 @@ pub fn set_daemon(home: &Path, owner: u32, worker: &[String]) -> Result<()> {
     })
 }
 
+/// Adds a Telegram user to those the agent answers.
+pub fn allow_telegram(home: &Path, user: i64) -> Result<()> {
+    // A list here stands in for the one in the owner's file, so it starts
+    // from everyone who is allowed now.
+    let already = crate::config::load_at(home)?.telegram.allow;
+    edit(home, |doc| {
+        let telegram = doc
+            .entry("telegram")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| not_a_table("telegram"))?;
+        let allow = telegram
+            .entry("allow")
+            .or_insert(value(toml_edit::Array::new()))
+            .as_array_mut()
+            .ok_or_else(|| {
+                Error::Config(format!("{SETTINGS_FILE}: `telegram.allow` is not a list"))
+            })?;
+        for user in already.into_iter().chain([user]) {
+            if !allow.iter().any(|listed| listed.as_integer() == Some(user)) {
+                allow.push(user);
+            }
+        }
+        Ok(())
+    })
+}
+
 fn edit(home: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
     let path = home.join(SETTINGS_FILE);
     let text = match std::fs::read_to_string(&path) {
@@ -300,6 +327,27 @@ mod tests {
         assert_eq!(config.daemon.owners, [1000, 1001]);
         assert_eq!(config.daemon.worker, worker("/usr/bin/tiphys"));
         assert_eq!(config.connections["a"].model.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn a_telegram_user_is_allowed_once_however_often_it_is_asked() {
+        let home = tempfile::tempdir().unwrap();
+        allow_telegram(home.path(), 42).unwrap();
+        allow_telegram(home.path(), 7).unwrap();
+        allow_telegram(home.path(), 42).unwrap();
+        assert_eq!(load_at(home.path()).unwrap().telegram.allow, [42, 7]);
+    }
+
+    #[test]
+    fn allowing_a_telegram_user_keeps_those_the_owner_listed_by_hand() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.toml"),
+            "[telegram]\nallow = [1, 2]\n",
+        )
+        .unwrap();
+        allow_telegram(home.path(), 3).unwrap();
+        assert_eq!(load_at(home.path()).unwrap().telegram.allow, [1, 2, 3]);
     }
 
     #[test]

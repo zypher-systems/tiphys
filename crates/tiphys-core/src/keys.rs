@@ -9,6 +9,10 @@
 //! A connection may instead name an environment variable (`env_key`), for a
 //! server that starts with nobody present. When that variable is set it is
 //! used; otherwise the stored key is.
+//!
+//! A connection's key is stored under the connection's name. A key that is
+//! not a connection's, such as a chat bot's token, is stored under a name
+//! that starts with `_`, which no connection can have.
 
 use std::fmt;
 use std::os::unix::fs::PermissionsExt;
@@ -20,6 +24,14 @@ use crate::{Error, Result};
 
 /// The directory under the state directory that holds the keys.
 pub const KEYS_DIR: &str = "keys";
+/// The name the Telegram bot's token is stored under.
+pub const TELEGRAM: &str = "_telegram";
+
+/// A name a key can be stored under: a connection's name, or one of
+/// Tiphys's own, which starts with `_`.
+fn valid_key_name(name: &str) -> Result<()> {
+    valid_name(name.strip_prefix('_').unwrap_or(name))
+}
 
 /// A key or token. It does not print: `Debug` shows a placeholder, and there
 /// is no `Display`, so a secret cannot slip into a log line or an error by
@@ -70,7 +82,7 @@ impl fmt::Debug for Secret {
 
 /// Stores `secret` under `name`, replacing any earlier one.
 pub fn store(home: &Path, name: &str, secret: &Secret) -> Result<()> {
-    valid_name(name)?;
+    valid_key_name(name)?;
     let dir = home.join(KEYS_DIR);
     ensure_dir_with_mode(&dir, PRIVATE_DIR)?;
     write_atomic(&dir.join(name), secret.expose().as_bytes(), PRIVATE_FILE)
@@ -78,12 +90,12 @@ pub fn store(home: &Path, name: &str, secret: &Secret) -> Result<()> {
 
 /// Whether a key is stored under `name`. This is all the app shows of one.
 pub fn is_stored(home: &Path, name: &str) -> bool {
-    valid_name(name).is_ok() && path(home, name).is_file()
+    valid_key_name(name).is_ok() && path(home, name).is_file()
 }
 
 /// Deletes the key stored under `name`. Returns whether there was one.
 pub fn remove(home: &Path, name: &str) -> Result<bool> {
-    valid_name(name)?;
+    valid_key_name(name)?;
     let path = path(home, name);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(true),
@@ -113,7 +125,7 @@ pub fn resolve_with(
 }
 
 fn read(home: &Path, name: &str) -> Result<Option<Secret>> {
-    valid_name(name)?;
+    valid_key_name(name)?;
     let path = path(home, name);
     let metadata = match std::fs::metadata(&path) {
         Ok(metadata) => metadata,
@@ -227,6 +239,27 @@ mod tests {
             assert!(!is_stored(home.path(), name), "{name}");
         }
         assert!(!home.path().join("config").exists());
+    }
+
+    #[test]
+    fn a_key_of_tiphys_own_has_a_name_no_connection_can_take() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(valid_name(TELEGRAM).is_err());
+        store(home.path(), TELEGRAM, &secret("123:bot")).unwrap();
+        // A connection that happens to be called telegram keeps its own key.
+        store(home.path(), "telegram", &secret("sk-model")).unwrap();
+        assert_eq!(
+            resolve(home.path(), TELEGRAM, None).unwrap(),
+            Some(secret("123:bot"))
+        );
+        assert_eq!(
+            resolve(home.path(), "telegram", None).unwrap(),
+            Some(secret("sk-model"))
+        );
+        // One underscore, and still nothing that leaves the directory.
+        for name in ["__telegram", "_", "_../x", "_a/b"] {
+            assert!(store(home.path(), name, &secret("x")).is_err(), "{name}");
+        }
     }
 
     #[test]

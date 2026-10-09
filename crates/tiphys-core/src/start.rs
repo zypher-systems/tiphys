@@ -108,7 +108,7 @@ pub async fn agent_for(
                     connection: name.to_string(),
                     model,
                     audience: start.audience.clone(),
-                    system: system_prompt(&runner.machine(), Utc::now()),
+                    system: system_prompt(&runner.machine(), Utc::now(), &start.audience),
                     tools: Registry::builtin().specs(),
                 },
             )?

@@ -12,18 +12,19 @@
 
 #![forbid(unsafe_code)]
 
+pub mod hosts;
 pub mod install;
+pub mod telegram;
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tiphys_core::host::{Host, Input, Sink};
+use tiphys_core::host::{Input, Sink};
 use tiphys_core::llm::{ChatConnect, Connect};
+use tiphys_core::proto::Request;
 use tiphys_core::wire::{self, AUDIENCES, ClientFrame, PROTOCOL, ServerFrame};
 use tiphys_core::{Error, Result, config, lock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -31,10 +32,14 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::JoinSet;
 
+use crate::hosts::Hosts;
+use crate::telegram::{Adapter, Control};
+
 /// How long a client has to say hello.
 const HELLO_WITHIN: Duration = Duration::from_secs(10);
-/// How long the hosts are given to stop a running turn when the daemon ends.
-const STOP_WITHIN: Duration = Duration::from_secs(15);
+/// How long Telegram is given to finish what it is sending when the daemon
+/// ends.
+const STOP_WITHIN: Duration = Duration::from_secs(5);
 /// The socket's permissions: its owner and its group.
 const SOCKET_MODE: u32 = 0o660;
 /// The longest path a Unix socket can have on Linux.
@@ -110,9 +115,10 @@ pub struct Daemon {
 
 /// What every connection needs.
 struct Shared {
-    hosts: HashMap<&'static str, UnboundedSender<Input>>,
+    hosts: Arc<Hosts>,
     owners: Vec<u32>,
-    next_client: AtomicU64,
+    /// The way to ask the Telegram adapter something.
+    telegram: UnboundedSender<Control>,
 }
 
 impl Daemon {
@@ -131,18 +137,17 @@ impl Daemon {
     /// Serves clients on `listener` until `stop` resolves, then stops any
     /// running turn cleanly and returns.
     pub async fn serve(self, listener: UnixListener, stop: impl Future<Output = ()>) -> Result<()> {
-        let mut hosts = HashMap::new();
-        let mut running = Vec::new();
-        for audience in AUDIENCES {
-            let (inbox, inputs) = unbounded_channel();
-            let host = Host::new(&self.home, &self.user_home, audience, self.connect.clone());
-            running.push(tokio::spawn(host.run(inputs)));
-            hosts.insert(*audience, inbox);
-        }
+        let hosts = Arc::new(Hosts::new(
+            &self.home,
+            &self.user_home,
+            self.connect.clone(),
+        ));
+        let (telegram, asked) = unbounded_channel();
+        let mut adapter = tokio::spawn(Adapter::new(hosts.clone()).run(asked));
         let shared = Arc::new(Shared {
-            hosts,
+            hosts: hosts.clone(),
             owners: self.owners,
-            next_client: AtomicU64::new(1),
+            telegram,
         });
 
         let mut connections = JoinSet::new();
@@ -160,13 +165,19 @@ impl Daemon {
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
             }
         }
-        // Clients first, so that nothing still holds a way to reach a host.
-        // A host with nothing that can reach it stops its turn and ends.
+        // Clients and Telegram first, so that nothing still holds a way to
+        // reach a host. A host with nothing that can reach it stops its turn
+        // and ends.
         connections.shutdown().await;
         drop(shared);
-        for host in running {
-            let _ = tokio::time::timeout(STOP_WITHIN, host).await;
+        if tokio::time::timeout(STOP_WITHIN, &mut adapter)
+            .await
+            .is_err()
+        {
+            adapter.abort();
+            let _ = adapter.await;
         }
+        hosts.stop().await;
         Ok(())
     }
 }
@@ -204,12 +215,13 @@ async fn serve_client(stream: UnixStream, shared: Arc<Shared>) {
         ))
         .await;
     }
-    let Some(inbox) = shared.hosts.get(audience.as_str()) else {
+    if !AUDIENCES.contains(&audience.as_str()) {
         return refuse(format!(
             "`{audience}` is not something a client can talk as"
         ))
         .await;
-    };
+    }
+    let inbox = shared.hosts.inbox(&audience);
     let hello = ServerFrame::Hello {
         protocol: PROTOCOL,
         version: tiphys_core::VERSION.to_string(),
@@ -222,12 +234,16 @@ async fn serve_client(stream: UnixStream, shared: Arc<Shared>) {
         return;
     }
 
-    let client = shared.next_client.fetch_add(1, Ordering::Relaxed);
+    let client = shared.hosts.client_id();
     let (outbox, mut outgoing) = unbounded_channel::<String>();
     let sink: Sink = Arc::new(move |event| {
         let _ = outbox.send(wire::event_line(event));
     });
-    if inbox.send(Input::Attach { client, sink }).is_err() {
+    let attach = Input::Attach {
+        client,
+        sink: sink.clone(),
+    };
+    if inbox.send(attach).is_err() {
         return;
     }
     loop {
@@ -241,6 +257,13 @@ async fn serve_client(stream: UnixStream, shared: Arc<Shared>) {
             line = lines.next_line() => {
                 let Ok(Some(line)) = line else { break };
                 match serde_json::from_str::<ClientFrame>(&line) {
+                    // Telegram is the daemon's, not any one host's.
+                    Ok(ClientFrame::Request { request: Request::Telegram(request) }) => {
+                        let reply = sink.clone();
+                        if shared.telegram.send(Control { request, reply }).is_err() {
+                            break;
+                        }
+                    }
                     Ok(ClientFrame::Request { request }) => {
                         if inbox.send(Input::Request { client, request }).is_err() {
                             break;
@@ -511,6 +534,36 @@ mod tests {
         );
         let (_, history) = next(oneshot).await;
         assert_eq!(history, Some(Event::History { events: Vec::new() }));
+        running.stop().await;
+    }
+
+    #[tokio::test]
+    async fn telegram_is_asked_about_over_the_socket_and_answered_to_the_one_who_asked() {
+        use tiphys_core::proto::{TelegramRequest, TelegramState};
+        let running = start(Arc::new(ReplayProvider::new(vec![]))).await;
+        let asking = connect(&running.socket, TERMINAL).await.unwrap();
+        let other = connect(&running.socket, TERMINAL).await.unwrap();
+        let (other, _) = until(other, |e| matches!(e, Event::History { .. })).await;
+
+        asking
+            .send(Request::Telegram(TelegramRequest::Status))
+            .unwrap();
+        let (asking, state) = until(asking, |e| matches!(e, Event::Telegram(_))).await;
+        assert_eq!(state, Event::Telegram(TelegramState::default()));
+        // Pairing without a bot is refused, and says what to do first.
+        asking
+            .send(Request::Telegram(TelegramRequest::Pair))
+            .unwrap();
+        let (_asking, failed) = until(asking, |e| matches!(e, Event::Failed { .. })).await;
+        assert!(matches!(failed, Event::Failed { ref message } if message.contains("token first")));
+
+        // The other client heard none of it.
+        let quiet = tokio::task::spawn_blocking(move || {
+            other.events.recv_timeout(Duration::from_millis(200))
+        })
+        .await
+        .unwrap();
+        assert!(quiet.is_err(), "{quiet:?}");
         running.stop().await;
     }
 

@@ -55,6 +55,7 @@ pub fn run(home: &Path) -> Vec<Check> {
     };
     if let Some(config) = &config {
         checks.extend(connections(home, config));
+        checks.push(telegram(home, config));
     }
     checks.push(key_store(home));
     checks.push(action_log(home));
@@ -143,6 +144,21 @@ fn connections(home: &Path, config: &Config) -> Vec<Check> {
         ));
     }
     checks
+}
+
+/// Whether Telegram is set up. Not being set up is not a failure.
+fn telegram(home: &Path, config: &Config) -> Check {
+    const NAME: &str = "telegram";
+    let users = config.telegram.allow.len();
+    match (keys::is_stored(home, keys::TELEGRAM), users) {
+        (false, _) => pass(NAME, "not set up; type /telegram in the app to add a bot"),
+        (true, 0) => pass(
+            NAME,
+            "a bot is set up and answers nobody yet; type /telegram in the app to pair",
+        ),
+        (true, 1) => pass(NAME, "a bot is set up and answers 1 user"),
+        (true, users) => pass(NAME, format!("a bot is set up and answers {users} users")),
+    }
 }
 
 fn key_store(home: &Path) -> Check {
@@ -258,6 +274,7 @@ mod tests {
                 ("state directory".to_string(), true),
                 ("configuration".to_string(), true),
                 ("connections".to_string(), false),
+                ("telegram".to_string(), true),
                 ("key store".to_string(), true),
                 ("action log".to_string(), true),
             ]

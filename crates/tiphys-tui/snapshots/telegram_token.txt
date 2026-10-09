@@ -1,0 +1,20 @@
+
+ Telegram
+
+ Talk to Tiphys from a Telegram chat. In Telegram, ask @BotFather for a new
+ bot, and paste the token it gives you here.
+
+ › Bot token
+
+ The token is checked with Telegram, then stored like a key: in a file only
+ Tiphys can read, and not shown again.
+
+
+
+ enter check and save · esc back · ctrl+c quit
+
+
+
+
+
+

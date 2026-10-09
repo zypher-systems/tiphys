@@ -71,3 +71,13 @@
 # be counted, and is not.
 # [spend]
 # daily_usd = 5.0
+
+# Who is answered on Telegram, by numeric Telegram user id. Anyone else gets
+# no reply at all. Pairing in the app (/telegram) adds to this list, in
+# settings.toml, so it is rarely written by hand. The bot's token is not
+# configuration: it is entered in the app and stored as a key.
+# [telegram]
+# allow = [123456789]
+
+# A Bot API server of your own, if you run one. Telegram's when unset.
+# api = "http://127.0.0.1:8081"

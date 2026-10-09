@@ -1,0 +1,20 @@
+
+ Telegram
+
+   Bot       @tiphys_bot
+   Answers   Telegram user 42
+
+ Anyone else who writes to the bot gets no answer at all.
+
+
+
+ p pair a user · t change the token · r remove the bot · esc back
+
+
+
+
+
+
+
+
+

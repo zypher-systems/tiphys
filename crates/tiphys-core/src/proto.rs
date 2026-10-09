@@ -61,6 +61,56 @@ pub enum Request {
     /// Say something about Tiphys itself: its action log, what it has spent,
     /// its sessions, whether it is in order. Answered with [`Event::Report`].
     Report(Report),
+    /// Set up or look at Telegram. Answered with [`Event::Telegram`]. Only
+    /// the daemon runs Telegram.
+    Telegram(TelegramRequest),
+}
+
+/// What the owner asks about Telegram, from the app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "telegram", rename_all = "snake_case")]
+pub enum TelegramRequest {
+    /// Say where things stand.
+    Status,
+    /// Use this bot. The token is checked with Telegram, then stored.
+    SetToken { token: Secret },
+    /// Open pairing: the answer carries a code, and for the next ten minutes
+    /// whoever sends the bot that code is shown to the owner. That is how
+    /// the owner is recognised without knowing their Telegram id.
+    Pair,
+    /// Answer this user from now on. It has to be the one pairing found.
+    Allow { user: i64 },
+    /// Forget the bot and stop reading its messages.
+    Remove,
+}
+
+/// Where Telegram stands.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TelegramState {
+    /// The bot's username, once Telegram has confirmed its token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<String>,
+    /// The users who are answered.
+    #[serde(default)]
+    pub allowed: Vec<i64>,
+    /// The code to send the bot, while pairing is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Who sent the bot the code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<Candidate>,
+    /// Why the bot's messages are not being read, when they are not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+/// Someone who sent the bot the pairing code and is not on the allowlist yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Candidate {
+    pub id: i64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 /// A connection as it is being set up: not yet saved, with the key as typed.
@@ -180,6 +230,9 @@ pub enum Event {
         ok: bool,
         message: String,
     },
+    /// Where Telegram stands, after a request about it or when someone
+    /// writes to the bot during pairing.
+    Telegram(TelegramState),
     /// A report that was asked for, as text. `ok` is whether what it found is
     /// good news.
     Report { text: String, ok: bool },
