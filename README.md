@@ -4,55 +4,85 @@ An **always-on agent for your server**. You install it on a machine of its own, 
 for you: it runs commands, checks on things, does scheduled jobs and reports back. You reach it from
 a terminal app on the server and from chat on your phone.
 
-> **Status: in development, nothing released.** The first milestone (M0) is built: the terminal
-> app, a connection set up and checked inside it, reading and changing files, running commands,
-> approvals, and the action log. It has been driven end to end against a scripted model; it has not
-> yet been run against a real provider. The daemon runs by hand; installing it as a service, and chat, are not built yet.
-> See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how it fits
-> together and [`DECISIONS.md`](DECISIONS.md) for why.
+> **Status: 0.1.0, early.** Tiphys runs as a service on an Ubuntu server and is reached from a
+> terminal app: it reads and changes files and runs commands, asks before anything that reaches
+> beyond its own home, and keeps a record of every action. Chat, scheduled jobs and memory are not
+> built yet. See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how
+> it fits together and [`DECISIONS.md`](DECISIONS.md) for why.
 
-## What it will be
+## Install
 
-- **A daemon on an Ubuntu server**, running as its own `tiphys` user. The machine is the security
-  boundary, so the agent has room to work inside it.
-- **A terminal app.** Running `tiphys` opens it. Setup, model connections, keys, chat and approvals
-  all happen there. A key is typed into a masked field and never passed on a command line.
-- **Chat.** Telegram first, by long polling, so the server opens no inbound port. Only accounts on
-  the allowlist are answered.
-- **Approvals.** Reads and ordinary changes run. Anything that needs root or changes the system
-  asks first, in the app or by a button in chat. A short list of actions is refused everywhere.
-- **An action log.** Every tool call leaves a record in a hash-chained file you can read and verify.
-- **Scheduled jobs** that run inside a scope you approved and deliver a report to your chat.
-- **Plain files.** Config is TOML, memory and skills are Markdown, and everything appended is JSONL.
+On an Ubuntu server, as a user who can use `sudo`:
 
-## Build from source
+```sh
+curl -fsSL https://raw.githubusercontent.com/zypher-systems/tiphys/main/install.sh | sh
+```
 
-Nothing is published yet.
+This downloads the release for the machine, checks it against the release's checksums, puts the
+binary in `/usr/local/bin`, and sets Tiphys up as a service. `tiphys daemon install --dry-run`
+shows every command and file that setup involves. Running the installer again updates Tiphys; your
+data is not touched. `--uninstall` removes the service and the binary and keeps the data.
+
+An installed Tiphys is two users:
+
+| User | Does | Home |
+| --- | --- | --- |
+| `tiphysd` | Runs the daemon. Holds the keys, the sessions and the action log | `/var/lib/tiphysd`, which nobody else can enter |
+| `tiphys` | Is who the agent acts as: every file it reads or writes, every command it runs | `/home/tiphys` |
+
+A command the agent runs cannot read a key, because the user it runs as cannot.
+
+You are added to the `tiphysd` group, which is what lets you reach the daemon. Log out and in
+again, then:
+
+```sh
+tiphys
+```
+
+The first time, the app asks for a connection: an address that speaks Chat Completions (OpenRouter,
+OpenAI, a server of your own) and its key. The key is typed into a masked field and never passed on
+a command line. The app lists the connection's models, makes one real tool call on the one you
+choose, and only then saves it.
+
+## Using it
+
+- **`tiphys`** opens the app. Close it in the middle of a turn, or lose the connection, and the
+  turn carries on; open it again and the conversation is there. `/new` starts a fresh session,
+  `/model` picks another model, `/connections` changes the connection, `/help` lists the rest.
+- **Approvals.** Looking around runs at once, and so do changes inside the agent's own home.
+  Anything else shows a card first: `sudo`, packages and services, writing outside its home, files
+  that usually hold a secret, scripts and programs whose effects cannot be read off the command
+  line. Only `y` approves. A short list of things is refused whoever asks.
+- **`tiphys -p "..."`** runs one turn without the app and prints the answer. Nobody is there to
+  approve anything, so only what runs without asking runs. `-c` carries on the last such run.
+- **`tiphys log`** lists every tool call and how it came to run or not. `tiphys log verify` checks
+  that no entry has been changed or removed.
+- **`tiphys spend`** shows what today and this month have cost. A turn stops when the day's total
+  reaches the limit, $5.00 unless you set another.
+- **`tiphys sessions`** lists sessions. **`tiphys doctor`** checks the installation;
+  `tiphys doctor --live` also makes a real tool call on the default connection.
+
+Settings are in `/var/lib/tiphysd/config.toml`, which Tiphys reads and never rewrites.
+[`config.example.toml`](config.example.toml) shows what can be set.
+
+## On a workstation
+
+Tiphys also runs by itself, with no service and no second user:
 
 ```sh
 cargo build --release --locked -p tiphys-cli && ./target/release/tiphys
 ```
 
-Running `tiphys` opens the app. The first time, it asks for a connection: an address that speaks
-Chat Completions and its key. It lists the connection's models, makes one real tool call on the one
-you choose, and only then saves it.
+Its state is then in `~/.tiphys`, or wherever `TIPHYS_HOME` points, and the agent acts as you. The
+rules about commands are then all that stands between a command and the key file, so this is for
+trying Tiphys out, not for leaving it running. `tiphys daemon run` runs the daemon by hand.
 
-- `tiphys -p "..."` runs one turn without the app and prints the answer. `-c` carries on the last
-  session.
-- `tiphys sessions` lists sessions. `tiphys spend` shows what today and this month have cost.
-- `tiphys log` lists every tool call and how it came to run or not. `tiphys log verify` checks
-  that no entry has been changed or removed.
-- `tiphys daemon run` runs the daemon in the foreground. While it runs, the app and `tiphys -p`
-  are its clients: close the app in the middle of a turn, open it again, and the turn is there.
-  `tiphys daemon status` says whether one is answering.
-- `sudo tiphys daemon install --owner <you>` sets Tiphys up as a service on an Ubuntu server,
-  as two users: one that holds the keys, and one that the agent acts as and that cannot read
-  them. `--dry-run` shows what it would do.
-- `tiphys doctor` checks the installation. `tiphys doctor --live` also makes a real tool call on
-  the default connection.
+## What it will be
 
-State lives in `~/.tiphys`, or wherever `TIPHYS_HOME` points. [`config.example.toml`](config.example.toml)
-shows what can be set by hand.
+- **Chat.** Telegram first, by long polling, so the server opens no inbound port. Only accounts on
+  an allowlist are answered, and approvals arrive as buttons.
+- **Scheduled jobs** that run inside a scope you approved and deliver a report to your chat.
+- **Memory** kept per chat, and skills, as plain Markdown files.
 
 ## Layout
 
@@ -61,7 +91,7 @@ shows what can be set by hand.
 | `crates/tiphys-core` | Config, connections and keys, the provider layer, the agent loop, tools, action policy, action log, sessions |
 | `crates/tiphys-tui` | The terminal app |
 | `crates/tiphys-cli` | The `tiphys` binary |
-| `crates/tiphys-daemon` | The daemon, its socket, chat adapters and the job runner (from M1) |
+| `crates/tiphys-daemon` | The daemon, its socket and the service install; later chat adapters and the job runner |
 
 ## License
 
