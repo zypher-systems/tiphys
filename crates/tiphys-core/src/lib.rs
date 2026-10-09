@@ -10,6 +10,7 @@ pub mod cancel;
 pub mod config;
 pub mod error;
 pub mod files;
+pub mod host;
 pub mod jsonl;
 pub mod keys;
 pub mod llm;

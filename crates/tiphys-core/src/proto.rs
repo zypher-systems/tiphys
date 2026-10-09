@@ -1,4 +1,7 @@
-//! What the agent tells whoever is watching.
+//! What a client and the agent's host say to each other.
+//!
+//! A client sends [`Request`]s. The terminal app is the first client; from
+//! the daemon onward, chat adapters are clients too.
 //!
 //! A turn is reported as a stream of [`Event`]s. The terminal app draws
 //! them, a one-shot run prints them, and from the daemon onward they are what
@@ -14,7 +17,79 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::Connection;
+use crate::keys::Secret;
+use crate::llm::Model;
 use crate::spend::Usage;
+
+/// What a client asks for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Request {
+    /// Say where things stand. Answered with [`Event::State`].
+    Hello,
+    /// Run a turn with this message. One that arrives during a turn waits
+    /// its turn.
+    Prompt { text: String },
+    /// Stop the turn that is running.
+    Cancel,
+    /// Leave the current session; the next prompt begins a new one.
+    NewSession,
+    /// Reach a connection that is being set up and list its models. Answered
+    /// with [`Event::Models`] or [`Event::Failed`].
+    TryConnection(Draft),
+    /// Make a real tool-call round trip on the draft's model. Answered with
+    /// [`Event::ModelChecked`].
+    CheckModel(Draft),
+    /// Keep a connection, with its key if one was typed, and make it the
+    /// default. Answered with [`Event::State`].
+    SaveConnection(Draft),
+    /// List the models of a connection that is already set up.
+    Models { connection: String },
+    /// Use this model for new sessions on a connection. Answered with
+    /// [`Event::State`].
+    ChooseModel { connection: String, model: String },
+}
+
+/// A connection as it is being set up: not yet saved, with the key as typed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    pub name: String,
+    pub connection: Connection,
+    /// The key typed in the app. `None` means use the one already stored
+    /// under this name, if there is one.
+    pub key: Option<Secret>,
+}
+
+/// Where things stand.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct State {
+    pub connections: Vec<ConnectionInfo>,
+    /// The connection a new session uses, when that is settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// The session prompts go to. None until the first prompt begins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionInfo>,
+}
+
+/// A connection, as much of it as a client may see. The key is never part.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectionInfo {
+    pub name: String,
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub local: bool,
+    /// Whether a key is stored or supplied for it.
+    pub has_key: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub id: String,
+    pub connection: String,
+    pub model: String,
+}
 
 /// One thing that happened in a turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,12 +133,35 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// Where things stand, after a request that asked or changed it.
+    State(State),
+    /// The models a connection offers.
+    Models { models: Vec<Model> },
+    /// How a model's tool-call round trip went.
+    ModelChecked {
+        model: String,
+        ok: bool,
+        message: String,
+    },
+    /// A request could not be carried out.
+    Failed { message: String },
 }
 
 impl Event {
-    /// Whether this event is kept in the session's event file.
+    /// Whether this event is kept in the session's event file. The pieces of
+    /// a streaming reply are not, and neither are answers to a client's own
+    /// requests, which are not part of any session.
     pub fn is_durable(&self) -> bool {
-        !matches!(self, Self::Text { .. } | Self::Reasoning { .. })
+        matches!(
+            self,
+            Self::UserMessage { .. }
+                | Self::AssistantMessage { .. }
+                | Self::ToolStarted { .. }
+                | Self::ToolFinished { .. }
+                | Self::Spend { .. }
+                | Self::Notice { .. }
+                | Self::TurnFinished { .. }
+        )
     }
 }
 
@@ -141,5 +239,12 @@ mod tests {
         assert!(!Event::Reasoning { text: "a".into() }.is_durable());
         assert!(Event::AssistantMessage { text: "a".into() }.is_durable());
         assert!(Event::Notice { text: "a".into() }.is_durable());
+        assert!(!Event::State(State::default()).is_durable());
+        assert!(
+            !Event::Failed {
+                message: "a".into()
+            }
+            .is_durable()
+        );
     }
 }

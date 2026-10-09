@@ -12,8 +12,7 @@ use chrono::Utc;
 use crate::agent::Agent;
 use crate::cancel::Cancel;
 use crate::config::{self, Config, Connection};
-use crate::llm::chat::ChatProvider;
-use crate::llm::{Provider, catalog};
+use crate::llm::{ChatConnect, Connect, Provider, catalog};
 use crate::prompt::{Machine, system_prompt};
 use crate::session::{self, Opening, Session};
 use crate::spend::PriceBook;
@@ -46,11 +45,16 @@ pub struct Start {
 pub async fn agent(home: &Path, start: Start) -> Result<Agent> {
     let user_home = dirs::home_dir()
         .ok_or_else(|| Error::Config("the user Tiphys runs as has no home directory".into()))?;
-    agent_for(home, &user_home, start).await
+    agent_for(home, &user_home, start, &ChatConnect).await
 }
 
 /// [`agent`] with the home of the user Tiphys runs as passed in.
-pub async fn agent_for(home: &Path, user_home: &Path, start: Start) -> Result<Agent> {
+pub async fn agent_for(
+    home: &Path,
+    user_home: &Path,
+    start: Start,
+    connect: &dyn Connect,
+) -> Result<Agent> {
     let config = config::load_at(home)?;
     let ctx = ToolCtx {
         state: home.to_path_buf(),
@@ -102,11 +106,11 @@ pub async fn agent_for(home: &Path, user_home: &Path, start: Start) -> Result<Ag
         ))
     })?;
     let key = keys::resolve(home, &name, connection.env_key.as_deref())?;
-    let provider = ChatProvider::new(connection, key.as_ref())?;
-    let prices = prices(home, &config, &name, &provider).await;
+    let provider = connect.provider(connection, key.as_ref())?;
+    let prices = prices(home, &config, &name, provider.as_ref()).await;
 
     Ok(Agent {
-        provider: Arc::new(provider),
+        provider,
         session,
         tools,
         ctx,
@@ -142,7 +146,7 @@ fn pick_connection<'a>(
 /// The prices for a run: the owner's, and the connection's model list. If the
 /// list was never kept it is fetched now; a failure to fetch it only means
 /// costs show as unknown.
-async fn prices(home: &Path, config: &Config, name: &str, provider: &ChatProvider) -> PriceBook {
+async fn prices(home: &Path, config: &Config, name: &str, provider: &dyn Provider) -> PriceBook {
     let mut book = PriceBook::new(config.pricing.clone());
     let models = match catalog::load(home, name) {
         Some(kept) => kept.models,
@@ -180,7 +184,7 @@ mod tests {
     }
 
     async fn agent(home: &Path, start: Start) -> Result<Agent> {
-        agent_for(home, &home.join("user"), start).await
+        agent_for(home, &home.join("user"), start, &ChatConnect).await
     }
 
     fn start() -> Start {

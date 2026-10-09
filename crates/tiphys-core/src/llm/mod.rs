@@ -13,11 +13,14 @@ use async_trait::async_trait;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 
+use crate::config::Connection;
+use crate::keys::Secret;
 use crate::spend::{Rates, Usage};
 use crate::{Error, Result};
 
 pub mod catalog;
 pub mod chat;
+pub mod check;
 mod replay;
 mod sse;
 
@@ -171,6 +174,42 @@ pub trait Provider: Send + Sync {
 
     /// The models this connection can chat with.
     async fn models(&self) -> Result<Vec<Model>>;
+}
+
+/// How a provider is made for a connection. The real one speaks Chat
+/// Completions; tests put a scripted provider in its place.
+pub trait Connect: Send + Sync {
+    fn provider(
+        &self,
+        connection: &Connection,
+        key: Option<&Secret>,
+    ) -> Result<std::sync::Arc<dyn Provider>>;
+}
+
+/// Connects over Chat Completions.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChatConnect;
+
+impl Connect for ChatConnect {
+    fn provider(
+        &self,
+        connection: &Connection,
+        key: Option<&Secret>,
+    ) -> Result<std::sync::Arc<dyn Provider>> {
+        Ok(std::sync::Arc::new(chat::ChatProvider::new(
+            connection, key,
+        )?))
+    }
+}
+
+/// Reads a provider's stream to its end.
+pub async fn collect(mut stream: DeltaStream) -> Result<Reply> {
+    use futures_util::StreamExt;
+    let mut reply = ReplyBuilder::default();
+    while let Some(delta) = stream.next().await {
+        reply.push(delta?);
+    }
+    reply.finish()
 }
 
 /// A whole reply.
