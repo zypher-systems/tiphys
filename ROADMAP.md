@@ -38,8 +38,8 @@ beyond the first, more than one owner.
 
 ## Now
 
-**M2: Telegram.** Built, and waiting for its first run against the real Telegram. M0 and M1 are
-done and released; the last release is 0.1.1.
+**M2: Telegram.** Released in 0.2.0, and waiting for its first run against the real Telegram. M0
+and M1 are done and released.
 
 - [x] Compaction: before a conversation is more than the model can hold, its oldest part is left
       out of what the model is sent: old tool results first, then whole turns. Nothing is deleted.

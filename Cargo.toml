@@ -9,7 +9,7 @@ members = [
 default-members = ["crates/tiphys-cli"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -18,9 +18,9 @@ repository = "https://github.com/zypher-systems/tiphys"
 homepage = "https://github.com/zypher-systems/tiphys"
 
 [workspace.dependencies]
-tiphys-core = { path = "crates/tiphys-core", version = "0.1.1" }
-tiphys-tui = { path = "crates/tiphys-tui", version = "0.1.1" }
-tiphys-daemon = { path = "crates/tiphys-daemon", version = "0.1.1" }
+tiphys-core = { path = "crates/tiphys-core", version = "0.2.0" }
+tiphys-tui = { path = "crates/tiphys-tui", version = "0.2.0" }
+tiphys-daemon = { path = "crates/tiphys-daemon", version = "0.2.0" }
 
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
