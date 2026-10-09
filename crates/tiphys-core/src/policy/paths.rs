@@ -60,8 +60,31 @@ const SECRET_ENDINGS: &[&str] = &["pem", "key", "p12", "pfx", "kdbx", "jks"];
 /// Names in `~/.ssh` that are not secrets.
 const SSH_PUBLIC: &[&str] = &["known_hosts", "config", "authorized_keys"];
 
+/// Entries under `/proc/<pid>/` that are another process's memory or
+/// environment, or a door to wherever that process happens to be.
+const PROC_DOORS: &[&str] = &["environ", "mem", "cwd", "root", "fd", "exe", "map_files"];
+
+const PROC_WHY: &str = "it goes through /proc, where a path can lead into another process or \
+                        anywhere on the machine";
+
+/// Whether a path goes through one of the doors in `/proc`. Such a path is
+/// judged as written: followed, it would be followed from this process, and
+/// the command that uses it runs in another.
+fn through_proc(path: &Path) -> bool {
+    let Ok(inside) = path.strip_prefix("/proc") else {
+        return false;
+    };
+    inside
+        .components()
+        .nth(1)
+        .is_some_and(|entry| PROC_DOORS.iter().any(|door| entry.as_os_str() == *door))
+}
+
 /// The verdict on reading `path`.
 pub fn read(path: &Path, places: Places) -> Verdict {
+    if through_proc(path) {
+        return Verdict::system(PROC_WHY);
+    }
     let real = resolve(path);
     if real.starts_with(resolve(&places.state.join(KEYS_DIR))) {
         return Verdict::never("this is Tiphys's key store, which is never read");
@@ -77,6 +100,9 @@ pub fn read(path: &Path, places: Places) -> Verdict {
 
 /// The verdict on creating, changing or deleting `path`.
 pub fn write(path: &Path, places: Places) -> Verdict {
+    if through_proc(path) {
+        return Verdict::system(PROC_WHY);
+    }
     let real = resolve(path);
     if real.starts_with(resolve(places.state)) {
         return Verdict::never(
@@ -94,6 +120,14 @@ pub fn write(path: &Path, places: Places) -> Verdict {
     }
     if is_secret(&real, places) {
         return Verdict::system(format!("{} usually holds a secret", real.display()));
+    }
+    // `authorized_keys` and `config` are not secrets, but a change to them
+    // changes who can get in and where connections go.
+    if real.starts_with(resolve(places.home).join(".ssh")) {
+        return Verdict::system(format!(
+            "{} decides who can log in as Tiphys and where its connections go",
+            real.display()
+        ));
     }
     let own = real.starts_with(resolve(places.home))
         || SCRATCH.iter().any(|scratch| real.starts_with(scratch));
@@ -333,6 +367,62 @@ mod tests {
         ];
         for path in plain {
             assert_eq!(f.read(&path), Class::Observe, "read {}", path.display());
+        }
+    }
+
+    #[test]
+    fn doors_in_proc_and_the_ssh_directory_ask() {
+        let home = Path::new("/home/tiphys-test-user");
+        let state = home.join(".tiphys");
+        let places = Places {
+            state: &state,
+            home,
+        };
+        for path in [
+            "/proc/1234/environ",
+            "/proc/self/cwd/notes.txt",
+            "/proc/1/root/etc/hosts",
+            "/proc/self/fd/3",
+            "/proc/42/mem",
+        ] {
+            assert_eq!(
+                read(Path::new(path), places).class,
+                Class::System,
+                "read {path}"
+            );
+            assert_eq!(
+                write(Path::new(path), places).class,
+                Class::System,
+                "write {path}"
+            );
+        }
+        for path in [
+            "/proc/cpuinfo",
+            "/proc/meminfo",
+            "/proc/1234/status",
+            "/proc/sys/kernel/hostname",
+        ] {
+            assert_eq!(
+                read(Path::new(path), places).class,
+                Class::Observe,
+                "{path}"
+            );
+        }
+        // Readable without asking, but not changeable.
+        for path in [
+            "/home/tiphys-test-user/.ssh/authorized_keys",
+            "/home/tiphys-test-user/.ssh/config",
+        ] {
+            assert_eq!(
+                read(Path::new(path), places).class,
+                Class::Observe,
+                "{path}"
+            );
+            assert_eq!(
+                write(Path::new(path), places).class,
+                Class::System,
+                "{path}"
+            );
         }
     }
 

@@ -136,7 +136,7 @@ the same way.
 | --- | --- | --- |
 | `read_file`, `list_dir`, `search_files` | Read | M0 |
 | `write_file`, `edit_file` | Change files. The whole new content is worked out before anything is judged, and the owner is shown the diff | M0 |
-| `shell` | Run a command | M0 |
+| `shell` | Run a command with `bash -c`, judged first, with a time limit; whatever it starts is stopped when the call ends | M0 |
 | `memory`, `job_save`, `job_delete` | Change what Tiphys keeps | M3 |
 | `web_fetch`, `web_search` | Read the web | M4 |
 
@@ -163,8 +163,13 @@ written for Ubuntu.
   approval preview.
 - Tiphys's state directory changes only through Tiphys itself. A tool never writes there.
 - A shell command is split into its parts (pipes, lists, redirects, `sudo`, `cd`) and each part is
-  classified. The command takes the highest class of its parts. A program the rules do not know is
-  System.
+  classified. The command takes the highest class of its parts.
+- A command runs without asking only when all of it is understood: a known program, used in a
+  known way, on paths that can be read off the line. A program that is not in the table, a
+  variable or a substitution that hides what is acted on, a script, an interpreter, and shell
+  syntax beyond a list of commands all ask.
+- Nothing on a command line may name the key store, by a path, a pattern that could match it, or a
+  recursive read or a git repository that would take it in.
 - Change actions run without asking by default, because the machine exists for the agent.
   `[approvals] change = "ask"` makes them ask.
 - An approval that nobody answers within 300 seconds is a deny, and the model is told so. In the
@@ -174,13 +179,23 @@ written for Ubuntu.
 
 ### 6.1 Root
 
-Chosen when the service is installed:
+Chosen when the service is installed, from M1:
 
 | Setting | Effect |
 | --- | --- |
 | `none` (default) | `sudo` fails at once. The agent hands the owner the command to run |
 | `listed` | Exact commands in `/etc/sudoers.d/tiphys`, generated from the config |
 | `all` | Passwordless `sudo`. The approval is the only gate |
+
+Until then Tiphys runs as whoever starts it, and `sudo` works only if that user has it without a
+password.
+
+### 6.2 What the rules are not
+
+The rules read the form of an action, not what it does when it runs. A script can do anything,
+which is why running one asks, and why the owner should read what they approve. A command the agent
+runs is the same user as the agent itself. The rules are a courtesy to the owner and a floor under
+the agent; the boundary is the machine, and from M1 the user that commands run as.
 
 ---
 

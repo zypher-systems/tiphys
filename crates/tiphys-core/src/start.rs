@@ -268,7 +268,7 @@ mod tests {
         );
         assert_eq!(meta.audience, "terminal");
         assert!(agent_a.session.system().starts_with("You are Tiphys"));
-        assert_eq!(agent_a.session.tools().len(), 5);
+        assert_eq!(agent_a.session.tools().len(), 6);
         assert!(agent_a.local);
 
         let chosen = Start {

@@ -53,6 +53,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Check that this installation is in working order.
+    Doctor {
+        /// Also make a real, paid tool call on the default connection.
+        #[arg(long)]
+        live: bool,
+    },
     /// Show the action log: every tool call, and how it came to run or not.
     Log {
         #[command(subcommand)]
@@ -103,6 +109,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         return oneshot::run(&home, run);
     }
     match cli.command {
+        Some(Command::Doctor { live }) => return doctor(&home, live),
         Some(Command::Log { what }) => {
             print_log(&home, what.unwrap_or(LogCommand::List { count: 20 }))?
         }
@@ -112,6 +119,29 @@ fn run(cli: Cli) -> Result<ExitCode> {
         None => tiphys_tui::run(&home, &config::user_home()?)?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn doctor(home: &Path, live: bool) -> Result<ExitCode> {
+    let mut checks = tiphys_core::doctor::run(home);
+    if live {
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| Error::Io(format!("could not start the runtime: {e}")))?;
+        checks.push(runtime.block_on(tiphys_core::doctor::live(
+            home,
+            &tiphys_core::llm::ChatConnect,
+        )));
+    }
+    for check in &checks {
+        let mark = if check.ok { "✓" } else { "✗" };
+        println!("{mark} {}: {}", check.name, check.detail);
+    }
+    let failed = checks.iter().filter(|check| !check.ok).count();
+    Ok(if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        println!("{failed} of {} checks did not pass.", checks.len());
+        ExitCode::FAILURE
+    })
 }
 
 fn print_log(home: &Path, what: LogCommand) -> Result<()> {

@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod paths;
+pub mod shell;
 
 /// How much an action changes, and so who has to agree to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

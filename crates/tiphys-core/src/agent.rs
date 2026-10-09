@@ -624,7 +624,7 @@ mod tests {
         let sent = &f.provider.requests()[0];
         assert_eq!(sent.system.as_deref(), Some("You are Tiphys."));
         assert_eq!(sent.model, "vendor/model");
-        assert_eq!(sent.tools.len(), 5);
+        assert_eq!(sent.tools.len(), 6);
     }
 
     #[tokio::test]

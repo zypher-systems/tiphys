@@ -20,6 +20,7 @@ use crate::policy::Verdict;
 use crate::policy::paths::Places;
 
 pub mod fs;
+pub mod shell;
 pub mod write;
 
 /// The most a tool's output may be, in bytes. A model that is handed a
@@ -154,6 +155,7 @@ impl Registry {
             .with(fs::SearchFiles)
             .with(write::WriteFile)
             .with(write::EditFile)
+            .with(shell::Shell)
     }
 
     pub fn with(mut self, tool: impl Tool + 'static) -> Self {

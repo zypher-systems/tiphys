@@ -5,32 +5,75 @@ release is decided.
 
 ## What 1.0 means
 
-Not written yet. The list is drafted once a first working version exists (the end of M0) and agreed
-with the owner. Until every item on it holds and the release is decided, Tiphys stays below 1.0.
+**A draft, not yet agreed.** It was written when the first version worked, for the owner to change
+and confirm. Tiphys stays below 1.0 until every item holds and the release is decided.
+
+- [ ] A fresh Ubuntu server goes from a release to a working conversation in chat by following the
+      README, with no step the README does not cover.
+- [ ] It runs unattended for 30 days: no restart, the state directory stays a sensible size, and it
+      comes back by itself after a reboot, a network loss, a provider outage and its own upgrade.
+- [ ] Only the daemon writes state. A `kill -9` at any moment loses at most the turn in flight, and
+      every file still reads back.
+- [ ] Every action is in the action log, and `tiphys log verify` passes at the end of the 30 days.
+- [ ] No message from an account off the allowlist reaches the model.
+- [ ] The rules are proven on real use: a kept list of real commands with the class each should
+      get, and no surface, setting or scheduled job gets past a refusal.
+- [ ] The key store cannot be read by a command the agent runs, by a boundary the operating system
+      enforces and not only by reading the command line.
+- [ ] An approval never hangs a turn: it is answered, denied or timed out, and the model is told
+      which.
+- [ ] Scheduled jobs collapse missed runs into one, stay inside their scope and budget, and report
+      when they are blocked.
+- [ ] Budgets hold across chat, jobs and one-shot runs, and a model with no known price never runs
+      unattended under a cap.
+- [ ] Each wire format passes a live tool-call round trip on the release, parallel calls included.
+- [ ] A conversation that never resets stays usable after many compactions.
+- [ ] Memory is scoped: what one chat said is never in another chat's prompt.
+- [ ] No key appears in a prompt, a tool result, the action log, a diagnostic log or a chat message.
+- [ ] Upgrades keep data: every file format carries a version and is tested from every release.
+- [ ] The README, the guide and `config.example.toml` match the release.
+
+Out of scope for 1.0: a web console, an MCP client, dispatch to other agents, chat platforms
+beyond the first, more than one owner.
 
 ## Now
 
-**M0: a first conversation.** The terminal app with the agent running in the same process.
+**M0: a first conversation.** Built, and waiting on one check that only the owner can make.
 
 - [x] Workspace, config, key store, crash-safe JSONL, CI.
 - [x] Provider layer: Chat Completions with streaming and tool calls, a replay provider, spend.
-      The wire fixtures are written by hand; captures from a real provider are still owed, and so
-      is the live round trip, which waits for the app.
 - [x] Agent loop: sessions, events, the tool registry, read-only tools, `tiphys -p`.
 - [x] Terminal app: first-run setup, connections with masked key entry, a model picker, a real
       tool-call check of the chosen model before it is saved, chat.
 - [x] File actions: the path rules, approvals with a card in the app, `write_file`, `edit_file`,
       the action log and `tiphys log`.
-- [ ] Commands: the `shell` tool with its Ubuntu rules, and `doctor`.
+- [x] Commands: the `shell` tool with its Ubuntu rules, and `tiphys doctor`.
+- [ ] **A live round trip with a real provider.** Everything so far was driven against a scripted
+      local server. The owner adds a connection and its key in the app; the app then makes a real
+      tool call before it saves the connection. `tiphys doctor --live` repeats it.
+- [ ] Captures of a real provider's streams in `crates/tiphys-core/fixtures/chat/`, in place of the
+      ones written by hand.
 
 Done when: you run `tiphys`, add a connection and its key in the app, ask "how full is the root
 disk? write the answer to ~/disk.txt", and the file appears; a `sudo` request shows an approval
 card; `tiphys log verify` passes.
 
+Known gaps in what is built:
+
+- The shell rules have met only the commands in their own tests. Real use will find commands that
+  ask and should not, and the reverse.
+- A command the agent runs is the same user as the agent, so the key store is protected from it by
+  the rules alone. M1 gives it a boundary the operating system enforces.
+- There is no spending limit yet.
+- The conversation is plain text: Markdown is not drawn, and a long diff in an approval card cannot
+  be scrolled.
+
 ## Next
 
 **M1: the daemon.** The daemon and its socket, the app as a client, a system unit,
-`tiphys daemon install`, an installer for Ubuntu.
+`tiphys daemon install`, an installer for Ubuntu. With the install: commands run where they cannot
+read the key store, the state directory moves out of the home the agent works in, a key read from
+the environment does not stay in it, and a daily spending limit is on by default.
 Done when: it is installed on an Ubuntu VM, you open the app as yourself, drop SSH in the middle of
 a turn, reconnect, and the turn replays and finishes.
 

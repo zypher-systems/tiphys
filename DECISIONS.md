@@ -2,6 +2,31 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: A shell command runs unasked only when all of it is understood
+- **By:** design, while building the shell tool.
+- **Decision:**
+  - A command line is split at `;`, `&&`, `||`, `|` and `&`. Each part is matched to a table of programs found on an Ubuntu server, and the paths it names go through the path rules. The command takes the strictest verdict of its parts.
+  - Asking is the default. A command leaves it only when every part is a known program, used in a known way, on paths written out on the line. An unknown program, an interpreter or a script, `xargs`, a variable other than `$HOME`, a command substitution, a here-document, a subshell, a loop: all ask.
+  - Nothing on the line may name the key store: a path into it, a pattern that could match its way there, a recursive read or a `find -exec` over a directory that holds it, a link to the state directory or above it, a git repository at or above it. These are refused, not asked about.
+  - Refused as well: `rm -r`, `mv`, `chmod -R` and `chown -R` on a system directory, the agent's home or its state; anything that formats or writes over a disk; stopping `tiphys` or `ssh`; deleting the `tiphys` user.
+  - A tree copied or moved, or an archive unpacked, straight into a directory that holds the state asks, because what is in it cannot be seen.
+  - A change under `~/.ssh` asks even where the file is no secret, since it decides who can log in.
+  - Paths through `/proc/<pid>/` into another process ask.
+  - The command runs with `bash -c`, no terminal and nothing on standard input, with a time limit. It is its own process group, and the group is killed when the call ends for any reason, so nothing outlives a cancelled turn. Variables that look like secrets are left out of its environment.
+- **Chosen vs rejected:**
+  - Rejected a list of dangerous patterns matched against the text: a deny-list fails open on whatever nobody thought of. An allow-table fails toward asking.
+  - Rejected letting scripts and interpreters run unasked on a machine made for the agent: one line of `python3 -c` can do everything the rules exist to notice.
+  - Rejected asking, in place of refusing, for a recursive read over the key store: an approval card that says "it would read through the key store" will be approved by someone in a hurry, and then the key is in a prompt.
+  - Rejected leaving background processes running after a call: a turn that was cancelled must leave nothing behind it.
+- **Why:** The owner should be asked about what matters and nothing else, and the rule for telling the two apart has to be one that is wrong in the safe direction.
+- **Where:** `tiphys-core/src/policy/shell.rs`, `tools/shell.rs`.
+- **Residual risk:**
+  - The rules read a command's form. `make`, a script, or any program not in the table asks, and what happens after the owner says yes is whatever it does.
+  - A command runs as the same user as the agent, so the key file is readable to it. The rules catch the ways of naming it that are in the tests; they are not a boundary. M1 runs commands where the key store cannot be read.
+  - `curl` to any address runs unasked as long as it sends no data, so the agent can reach anything the machine can reach.
+  - The agent cannot start a long-running process through the shell, because the process group dies with the call.
+  - The table will be wrong in places. A command that asks and should not is an annoyance; one that runs and should have asked is a defect, and belongs in the tests when found.
+
 ### 2026-10-09: The agent's home is its own; a write anywhere else asks
 - **By:** design, while building the file tools.
 - **Decision:**
