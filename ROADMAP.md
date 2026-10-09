@@ -85,7 +85,9 @@ install on.
       the state. With it, the state directory moves out of the home the agent works in.
 - [ ] `tiphys daemon install`: the users, the unit, the directories, and the owner who may connect.
       A daily spending limit, on by default. A key read from the environment does not stay in it.
-- [ ] `install.sh` for Ubuntu and a release workflow that builds the binaries it downloads.
+- [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
+      x86_64 and arm64 and drafts the release. CI builds the same archives and runs the installer on
+      them on every push. The installer hands over to `tiphys daemon install` once that exists.
 - [ ] The first release, when the owner asks for it, and the install on a real server.
 
 Done when: it is installed on an Ubuntu server from a release, you open the app as yourself, drop

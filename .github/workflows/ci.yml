@@ -26,3 +26,35 @@ jobs:
         run: cargo test --workspace
       - name: version
         run: cargo run -p tiphys-cli -- --version
+      - name: installer syntax
+        run: sh -n install.sh && sh -n packaging/build.sh
+
+  # The build a release is made of, and the installer run on its result, on
+  # both kinds of machine a release is for.
+  release-build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: build
+        run: packaging/build.sh ${{ matrix.target }}
+      - name: install from the archive
+        run: |
+          sh install.sh --from dist/tiphys-${{ matrix.target }}.tar.gz --prefix "$RUNNER_TEMP/prefix" --no-service
+          "$RUNNER_TEMP/prefix/bin/tiphys" --version
+          "$RUNNER_TEMP/prefix/bin/tiphys" doctor || true

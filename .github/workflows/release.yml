@@ -1,0 +1,65 @@
+name: release
+
+# A tag on main builds the release and drafts it. A person publishes it.
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          targets: ${{ matrix.target }}
+      - name: musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: the tag is the version
+        run: |
+          wanted="v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          [ "$GITHUB_REF_NAME" = "$wanted" ] || { echo "tag $GITHUB_REF_NAME, Cargo.toml $wanted"; exit 1; }
+      - name: build
+        run: packaging/build.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiphys-${{ matrix.target }}
+          path: dist/*
+
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: the tag is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && cat *.sha256 > SHA256SUMS && rm -- *.sha256 && sha256sum -c SHA256SUMS
+      - name: draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          [ -f "$notes" ] || { echo "no release notes at $notes"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Tiphys ${GITHUB_REF_NAME#v}" --notes-file "$notes" dist/*
