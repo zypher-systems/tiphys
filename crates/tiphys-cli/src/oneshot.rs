@@ -6,7 +6,8 @@
 //! to approve anything, so only what runs without asking runs.
 //!
 //! The exit status says how the turn ended: 0 when the model finished, 1 when
-//! something failed, 2 when the turn was stopped before it finished.
+//! something failed, 2 when the turn was stopped before it finished, 3 when
+//! the day's spending limit stopped it.
 
 use std::io::Write;
 use std::path::Path;
@@ -125,6 +126,8 @@ fn finish(json: bool, reason: StopReason, error: Option<&str>) -> ExitCode {
             StopReason::Completed => {}
             StopReason::Failed => eprintln!("tiphys: {}", error.unwrap_or("the turn failed")),
             StopReason::Cancelled => eprintln!("tiphys: stopped"),
+            // The notice that came with it has said why.
+            StopReason::Budget => {}
             StopReason::Rounds => {
                 eprintln!("tiphys: stopped at the round limit; -c -p \"continue\" carries on");
             }
@@ -137,6 +140,7 @@ fn finish(json: bool, reason: StopReason, error: Option<&str>) -> ExitCode {
     match reason {
         StopReason::Completed => ExitCode::SUCCESS,
         StopReason::Failed => ExitCode::FAILURE,
+        StopReason::Budget => ExitCode::from(3),
         _ => ExitCode::from(2),
     }
 }

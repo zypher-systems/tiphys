@@ -68,7 +68,7 @@ Known gaps in what is built:
   should not, and the reverse.
 - A command the agent runs is the same user as the agent, so the key store is protected from it by
   the rules alone. M1 gives it a boundary the operating system enforces.
-- There is no spending limit yet.
+- A call whose price is not known is not counted toward the spending limit.
 - The conversation is plain text: Markdown is not drawn, and a long diff in an approval card cannot
   be scrolled.
 
@@ -91,7 +91,8 @@ install on.
 - [x] `tiphys log`, `spend`, `sessions` and `doctor` ask the daemon when there is one, since the
       owner of an installed Tiphys cannot read its state. `doctor` also starts the worker, to see
       that it works and who the agent acts as.
-- [ ] A daily spending limit, on by default.
+- [x] A daily spending limit, on by default at $5.00 a day: a turn stops when the day's total
+      across every session has reached it. `[spend] daily_usd` changes it; 0 turns it off.
 - [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
       x86_64 and arm64 and drafts the release. CI builds the same archives and runs the installer on
       them on every push. The installer hands over to `tiphys daemon install` once that exists.

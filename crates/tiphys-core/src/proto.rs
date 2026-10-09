@@ -222,6 +222,8 @@ pub enum StopReason {
     CutOff,
     /// The owner stopped it.
     Cancelled,
+    /// The day's spending limit was reached.
+    Budget,
     /// The provider or the disk failed. The event carries the error.
     Failed,
 }

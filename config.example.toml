@@ -64,3 +64,10 @@
 # user. Installed, it is set for you. Left out, there is no worker, and
 # Tiphys acts as the user it runs as.
 # worker = ["sudo", "-n", "-H", "-u", "tiphys", "/usr/local/bin/tiphys", "worker"]
+
+# The most that may be spent on model calls in one day, in dollars, across
+# every session. A turn stops when the day's total has reached it, and says
+# so. Days are UTC. 0 means no limit. A call whose price is not known cannot
+# be counted, and is not.
+# [spend]
+# daily_usd = 5.0

@@ -88,6 +88,32 @@ pub struct Config {
     pub approvals: Approvals,
     /// Who may reach the daemon.
     pub daemon: Daemon,
+    /// How much may be spent.
+    pub spend: Spend,
+}
+
+/// How much may be spent.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Spend {
+    /// The most that may be spent on model calls in one day (UTC), in
+    /// dollars, across every session. A turn stops when the day's total has
+    /// reached it. 0 means no limit. A call whose price is not known cannot
+    /// be counted, and is not.
+    pub daily_usd: f64,
+}
+
+impl Default for Spend {
+    fn default() -> Self {
+        Self { daily_usd: 5.0 }
+    }
+}
+
+impl Spend {
+    /// The limit, if there is one.
+    pub fn daily_limit(&self) -> Option<f64> {
+        (self.daily_usd > 0.0).then_some(self.daily_usd)
+    }
 }
 
 /// Who may reach the daemon.
@@ -188,6 +214,11 @@ impl Config {
                     "pricing for `{model}`: a rate must be a number that is not negative"
                 )));
             }
+        }
+        if !self.spend.daily_usd.is_finite() || self.spend.daily_usd < 0.0 {
+            return Err(Error::Config(
+                "spend: daily_usd must be a number that is not negative; 0 means no limit".into(),
+            ));
         }
         if self.limits.rounds == 0 || self.limits.max_tokens == Some(0) {
             return Err(Error::Config(
@@ -399,6 +430,10 @@ mod tests {
         assert_eq!((rates.input, rates.output), (3.0, 15.0));
         assert_eq!((rates.cache_read, rates.cache_write), (Some(0.3), None));
         assert_eq!(config.limits, Limits::default());
+        // There is a daily limit unless the owner sets another, or none.
+        assert_eq!(config.spend.daily_limit(), Some(5.0));
+        let unlimited = home_with("[spend]\ndaily_usd = 0\n", "");
+        assert_eq!(load_at(unlimited.path()).unwrap().spend.daily_limit(), None);
         assert_eq!(config.approvals.change, OnChange::Run);
     }
 
@@ -462,6 +497,7 @@ mod tests {
             ),
             ("[pricing.m]\ninput = 1.0", "output"),
             ("[limits]\nrounds = 0", "at least 1"),
+            ("[spend]\ndaily_usd = -1.0", "not negative"),
             ("[limits]\nturns = 3", "unknown field"),
             ("[approvals]\nchange = \"never\"", "unknown variant"),
             ("default_connection = ", "config.toml"),

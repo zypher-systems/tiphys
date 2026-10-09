@@ -460,7 +460,8 @@ impl Chat {
                         .push(Item::Assistant(format!("{} …", partial.trim_end())));
                 }
                 match reason {
-                    StopReason::Completed | StopReason::Rounds => {}
+                    // These say why themselves, in a notice sent before the end.
+                    StopReason::Completed | StopReason::Rounds | StopReason::Budget => {}
                     StopReason::Cancelled => self.items.push(Item::Notice("Stopped.".into())),
                     StopReason::Stuck => self.items.push(Item::Notice(
                         "Stopped: the model kept making the same call and getting the same result."

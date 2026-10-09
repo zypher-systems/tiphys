@@ -80,6 +80,8 @@ pub struct Agent {
     /// Whether changes inside the agent's own home ask as well.
     pub ask_before_change: bool,
     pub actions: ActionLog,
+    /// The most that may be spent in a day, in dollars, if there is a limit.
+    pub daily_limit: Option<f64>,
 }
 
 impl Agent {
@@ -124,6 +126,10 @@ impl Agent {
         for _ in 0..self.limits.rounds {
             if self.cancel.is_cancelled() {
                 return Ok(StopReason::Cancelled);
+            }
+            if let Some(notice) = self.over_the_limit()? {
+                self.tell(emit, Event::Notice { text: notice })?;
+                return Ok(StopReason::Budget);
             }
             turn.rounds += 1;
             let Some(reply) = self.ask(emit).await? else {
@@ -190,6 +196,23 @@ impl Agent {
             },
         )?;
         Ok(StopReason::Rounds)
+    }
+
+    /// Says so if the day's spending has reached its limit. The total is the
+    /// ledger's, so it counts every session, not only this one.
+    fn over_the_limit(&self) -> Result<Option<String>> {
+        let Some(limit) = self.daily_limit else {
+            return Ok(None);
+        };
+        let (today, _) = spend::totals(&self.home)?;
+        Ok((today.cost >= limit).then(|| {
+            format!(
+                "Stopped: today's spending limit of {} is reached ({} so far today). It starts \
+                 again at midnight UTC. `[spend] daily_usd` in config.toml sets the limit.",
+                spend::dollars(Some(limit)),
+                spend::dollars(Some(today.cost))
+            )
+        }))
     }
 
     /// Sends the conversation and reads the reply, passing its text on as it
@@ -544,6 +567,7 @@ mod tests {
                 approver: Arc::new(DenyAll),
                 ask_before_change: false,
                 actions: ActionLog::at(&log_home),
+                daily_limit: None,
             },
             provider: replay,
             user_home: home,
@@ -755,6 +779,34 @@ mod tests {
         assert_eq!(results[1], "hello from disk\n");
         assert!(results[2].contains("made this exact call several times"));
         assert!(!results[3].contains("made this exact call"));
+    }
+
+    #[tokio::test]
+    async fn a_turn_stops_when_the_days_spending_reaches_its_limit() {
+        // Each reply costs $2: 1M tokens in at $1 and 0.5M out at $2.
+        let mut f = fixture(vec![says("One."), says("Two."), says("never asked for")]);
+        f.agent.daily_limit = Some(3.0);
+        assert_eq!(f.turn("first").await.reason, StopReason::Completed);
+        // $2 so far: under the limit, so the next turn starts, and ends over it.
+        assert_eq!(f.turn("second").await.reason, StopReason::Completed);
+
+        let turn = f.turn("third").await;
+        assert_eq!((turn.reason, turn.rounds), (StopReason::Budget, 0));
+        // No model was called, so nothing more was spent.
+        assert_eq!(f.provider.requests().len(), 2);
+        let notice = f.events.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::Notice { text } => Some(text.clone()),
+            _ => None,
+        });
+        let notice = notice.unwrap();
+        assert!(
+            notice.contains("limit of $3.00 is reached ($4.00 so far today)"),
+            "{notice}"
+        );
+
+        // Without a limit it goes on.
+        f.agent.daily_limit = None;
+        assert_eq!(f.turn("fourth").await.reason, StopReason::Completed);
     }
 
     #[tokio::test]

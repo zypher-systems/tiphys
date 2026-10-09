@@ -137,6 +137,7 @@ pub async fn agent_for(
         approver,
         ask_before_change: config.approvals.change == OnChange::Ask,
         actions: ActionLog::at(home),
+        daily_limit: config.spend.daily_limit(),
     })
 }
 
