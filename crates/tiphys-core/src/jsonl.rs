@@ -71,6 +71,29 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
     Ok(records)
 }
 
+/// Reads the last complete record in `path` without reading the rest of the
+/// file. A missing or empty file has none.
+pub fn last<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io(e)),
+    };
+    let len = file.metadata().map_err(io)?.len();
+    // Past the newline that ends the last whole line, then back to its start.
+    let end = end_of_last_complete_line(&file, len).map_err(io)?;
+    if end == 0 {
+        return Ok(None);
+    }
+    let start = end_of_last_complete_line(&file, end - 1).map_err(io)?;
+    let mut line = vec![0u8; (end - 1 - start) as usize];
+    file.read_exact_at(&mut line, start).map_err(io)?;
+    serde_json::from_slice(&line)
+        .map(Some)
+        .map_err(|e| Error::Io(format!("{}: last line: {e}", path.display())))
+}
+
 /// Where the torn tails of `path` are kept.
 pub fn torn_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -200,6 +223,25 @@ mod tests {
             read::<Record>(&path).unwrap(),
             [record(1, "one"), record(3, "three")]
         );
+    }
+
+    #[test]
+    fn the_last_record_is_read_from_the_end_and_a_torn_tail_is_not_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        assert_eq!(last::<Record>(&path).unwrap(), None);
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(last::<Record>(&path).unwrap(), None);
+
+        append(&path, &record(1, "one")).unwrap();
+        assert_eq!(last::<Record>(&path).unwrap(), Some(record(1, "one")));
+        // A record longer than one read from the end.
+        let long = "x".repeat(200 * 1024);
+        append(&path, &record(2, &long)).unwrap();
+        assert_eq!(last::<Record>(&path).unwrap(), Some(record(2, &long)));
+        append(&path, &record(3, "three")).unwrap();
+        add_raw(&path, b"{\"seq\":4,\"te");
+        assert_eq!(last::<Record>(&path).unwrap(), Some(record(3, "three")));
     }
 
     #[test]

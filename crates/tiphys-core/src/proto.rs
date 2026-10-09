@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Connection;
 use crate::keys::Secret;
 use crate::llm::Model;
+use crate::policy::Class;
 use crate::spend::Usage;
 
 /// What a client asks for.
@@ -32,6 +33,13 @@ pub enum Request {
     Prompt { text: String },
     /// Stop the turn that is running.
     Cancel,
+    /// Answer the approval request `id`. With `approve` false, `note` is
+    /// passed on to the model as the owner's reason.
+    Approval {
+        id: String,
+        approve: bool,
+        note: Option<String>,
+    },
     /// Leave the current session; the next prompt begins a new one.
     NewSession,
     /// Reach a connection that is being set up and list its models. Answered
@@ -118,6 +126,27 @@ pub enum Event {
         ok: bool,
         output: String,
     },
+    /// An action is waiting for the owner's yes or no.
+    ApprovalRequested {
+        id: String,
+        tool: String,
+        summary: String,
+        reason: String,
+        /// Why it has to ask, in the rules' words.
+        why: String,
+        class: Class,
+        /// What will change, when there is something to show.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+    },
+    /// The owner answered, or the question ran out of time.
+    ApprovalResolved {
+        id: String,
+        approved: bool,
+        /// What the model was told, when the answer was no.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        note: String,
+    },
     /// A model call was paid for. An unknown cost is absent, not zero.
     Spend {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +187,8 @@ impl Event {
                 | Self::AssistantMessage { .. }
                 | Self::ToolStarted { .. }
                 | Self::ToolFinished { .. }
+                | Self::ApprovalRequested { .. }
+                | Self::ApprovalResolved { .. }
                 | Self::Spend { .. }
                 | Self::Notice { .. }
                 | Self::TurnFinished { .. }

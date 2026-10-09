@@ -16,9 +16,11 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::llm::{ToolCall, ToolSpec};
-use crate::policy::Class;
+use crate::policy::Verdict;
+use crate::policy::paths::Places;
 
 pub mod fs;
+pub mod write;
 
 /// The most a tool's output may be, in bytes. A model that is handed a
 /// megabyte of log has less room left to think about it.
@@ -33,6 +35,29 @@ pub struct ToolCtx {
     pub home: PathBuf,
     /// Where a relative path starts from.
     pub cwd: PathBuf,
+}
+
+impl ToolCtx {
+    /// The places the path rules are about.
+    pub fn places(&self) -> Places<'_> {
+        Places {
+            state: &self.state,
+            home: &self.home,
+        }
+    }
+
+    /// Where a path the model gave points: `~` is the Tiphys user's home, and
+    /// a relative path starts from the working directory.
+    pub fn locate(&self, path: &str) -> PathBuf {
+        let path = path.trim();
+        if path == "~" {
+            self.home.clone()
+        } else if let Some(rest) = path.strip_prefix("~/") {
+            self.home.join(rest)
+        } else {
+            self.cwd.join(path)
+        }
+    }
 }
 
 /// What a tool handed back.
@@ -93,10 +118,17 @@ pub trait Tool: Send + Sync {
 /// One thing a tool is about to do.
 #[async_trait]
 pub trait Action: Send {
-    fn class(&self) -> Class;
+    /// What the rules say about it.
+    fn verdict(&self) -> Verdict;
 
     /// What it will do, in a line the owner can read.
     fn summary(&self) -> String;
+
+    /// What will change, for the owner to look at before saying yes: a diff,
+    /// or the command in full.
+    fn preview(&self) -> Option<String> {
+        None
+    }
 
     async fn run(self: Box<Self>, ctx: &ToolCtx) -> Output;
 }
@@ -120,6 +152,8 @@ impl Registry {
             .with(fs::ReadFile)
             .with(fs::ListDir)
             .with(fs::SearchFiles)
+            .with(write::WriteFile)
+            .with(write::EditFile)
     }
 
     pub fn with(mut self, tool: impl Tool + 'static) -> Self {
@@ -208,8 +242,8 @@ mod tests {
 
     #[async_trait]
     impl Action for Say {
-        fn class(&self) -> Class {
-            Class::Observe
+        fn verdict(&self) -> Verdict {
+            Verdict::observe()
         }
         fn summary(&self) -> String {
             format!("say {}", self.0)

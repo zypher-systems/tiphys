@@ -135,7 +135,7 @@ the same way.
 | Tool | Does | From |
 | --- | --- | --- |
 | `read_file`, `list_dir`, `search_files` | Read | M0 |
-| `write_file`, `edit_file` | Change files, with a diff as the preview | M0 |
+| `write_file`, `edit_file` | Change files. The whole new content is worked out before anything is judged, and the owner is shown the diff | M0 |
 | `shell` | Run a command | M0 |
 | `memory`, `job_save`, `job_delete` | Change what Tiphys keeps | M3 |
 | `web_fetch`, `web_search` | Read the web | M4 |
@@ -147,21 +147,28 @@ shown on the approval card and stored in the action log.
 
 ## 6. Action policy
 
-Every planned action gets one class. The rules are written for Ubuntu.
+Every planned action gets one class, and with it a reason when it asks or is refused. The rules are
+written for Ubuntu.
 
 | Class | Meaning | Terminal app | Telegram | Scheduled job |
 | --- | --- | --- | --- | --- |
 | Observe | Reads | Runs | Runs | Runs |
-| Change | Changes made as the `tiphys` user | Runs | Runs | Only inside the job's scope |
-| System | Needs root, or changes the system: `apt`, `dpkg`, `snap`, `systemctl`, `ufw`, `/etc`, users | Asks | Asks by button | Only if pre-authorised |
-| Never | Destroys the machine, leaks keys, rewrites the action log, stops `tiphys` or `ssh` | Refused | Refused | Refused |
+| Change | Changes inside the agent's own home, `/tmp` and `/var/tmp` | Runs | Runs | Only inside the job's scope |
+| System | Reaches outside the agent's home, needs root, or touches a file that usually holds a secret | Asks | Asks by button | Only if pre-authorised |
+| Never | Reads the key store, changes Tiphys's own state or installation, destroys the machine, stops `tiphys` or `ssh` | Refused | Refused | Refused |
 
+- A path is judged where it really points: symlinks are followed and `..` is worked out first.
+- Reading a file that usually holds a secret (a private key, `.env`, `/etc/shadow`) asks, because
+  reading it sends it to the model provider. What is already in such a file is not shown in an
+  approval preview.
+- Tiphys's state directory changes only through Tiphys itself. A tool never writes there.
 - A shell command is split into its parts (pipes, lists, redirects, `sudo`, `cd`) and each part is
   classified. The command takes the highest class of its parts. A program the rules do not know is
   System.
 - Change actions run without asking by default, because the machine exists for the agent.
   `[approvals] change = "ask"` makes them ask.
-- An approval that nobody answers within 300 seconds is a deny, and the model is told so.
+- An approval that nobody answers within 300 seconds is a deny, and the model is told so. In the
+  app only `y` is a yes.
 - The Never class is checked in core, before any approver is consulted. No surface, setting or
   job can lift it.
 
@@ -179,11 +186,17 @@ Chosen when the service is installed:
 
 ## 7. The action log
 
-Every tool call appends one record: time, session, surface, tool, class, the reason, a summary of
-what was asked, who or what approved it, and the outcome. Each record carries the hash of the one
-before it, so a removed or edited record breaks the chain. `tiphys log verify` checks it.
+Every tool call appends one entry to `log/YYYY-MM.jsonl`: time, session, audience, tool, class, a
+summary of what was asked, the model's reason, how it was let through (free, approved, denied,
+refused, or not understood), and whether it worked. Each entry carries the hash of the one before
+it, and its own hash covers the rest of it, so a removed or edited entry breaks the chain.
+`tiphys log verify` checks it; `tiphys log` lists it.
 
-If a record cannot be written, the action does not run.
+If the log cannot be written, the action does not run.
+
+The log is evidence for the owner, not a lock. A program running as the Tiphys user could rewrite
+the whole file with a new chain. The rules refuse every write to it, and the machine is the
+boundary.
 
 ---
 

@@ -9,7 +9,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use tiphys_core::{Result, config, session, spend};
+use tiphys_core::actionlog::{ActionLog, Entry};
+use tiphys_core::{Error, Result, config, session, spend};
 
 mod oneshot;
 
@@ -52,10 +53,29 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Show the action log: every tool call, and how it came to run or not.
+    Log {
+        #[command(subcommand)]
+        what: Option<LogCommand>,
+    },
     /// List sessions, newest first.
     Sessions,
     /// Show what today and this month have cost.
     Spend,
+}
+
+#[derive(Debug, Subcommand)]
+enum LogCommand {
+    /// The most recent entries.
+    List {
+        /// How many to show.
+        #[arg(short = 'n', default_value_t = 20)]
+        count: usize,
+    },
+    /// One entry in full.
+    Show { seq: u64 },
+    /// Check that no entry has been changed or removed.
+    Verify,
 }
 
 fn main() -> ExitCode {
@@ -83,12 +103,65 @@ fn run(cli: Cli) -> Result<ExitCode> {
         return oneshot::run(&home, run);
     }
     match cli.command {
+        Some(Command::Log { what }) => {
+            print_log(&home, what.unwrap_or(LogCommand::List { count: 20 }))?
+        }
         Some(Command::Sessions) => print_sessions(&home)?,
         Some(Command::Spend) => print_spend(&home)?,
         // With nothing asked for, the app.
         None => tiphys_tui::run(&home, &config::user_home()?)?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_log(home: &Path, what: LogCommand) -> Result<()> {
+    let log = ActionLog::at(home);
+    match what {
+        LogCommand::List { count } => {
+            let entries = log.entries()?;
+            if entries.is_empty() {
+                println!("The action log is empty.");
+            }
+            let skip = entries.len().saturating_sub(count);
+            for entry in &entries[skip..] {
+                println!("{}", log_line(entry));
+            }
+        }
+        LogCommand::Show { seq } => {
+            let entries = log.entries()?;
+            let entry = entries
+                .iter()
+                .find(|entry| entry.seq == seq)
+                .ok_or_else(|| Error::Config(format!("the action log has no entry {seq}")))?;
+            let json = serde_json::to_string_pretty(entry)
+                .map_err(|e| Error::Io(format!("cannot show the entry: {e}")))?;
+            println!("{json}");
+        }
+        LogCommand::Verify => {
+            let count = log.verify()?;
+            println!(
+                "{count} entries, each following from the one before. Nothing has been changed or removed."
+            );
+        }
+    }
+    Ok(())
+}
+
+/// One entry on one line: its number, when, how it was let through, whether
+/// it worked, and what it was.
+fn log_line(entry: &Entry) -> String {
+    let lower = |value: &dyn std::fmt::Debug| format!("{value:?}").to_lowercase();
+    format!(
+        "{:>5}  {}  {:<8}  {:<7}  {}  {}",
+        entry.seq,
+        entry.at.format("%Y-%m-%d %H:%M:%S"),
+        lower(&entry.gate),
+        entry
+            .class
+            .map_or_else(|| "-".to_string(), |class| lower(&class)),
+        if entry.ok { "ok    " } else { "failed" },
+        entry.summary,
+    )
 }
 
 fn print_sessions(home: &Path) -> Result<()> {

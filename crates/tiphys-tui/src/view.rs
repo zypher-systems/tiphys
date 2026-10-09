@@ -206,6 +206,21 @@ pub struct Chat {
     pub cost: f64,
     /// Calls whose cost is not known.
     pub unpriced: u32,
+    /// An action waiting for the owner's yes or no. While there is one, the
+    /// keys answer it and nothing else.
+    pub card: Option<Card>,
+}
+
+/// What the owner is shown when an action asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Card {
+    pub id: String,
+    pub summary: String,
+    /// Why the model wants to do it.
+    pub reason: String,
+    /// Why it has to ask.
+    pub why: String,
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,6 +408,27 @@ impl Chat {
                 }
                 self.activity = Activity::Waiting;
             }
+            Event::ApprovalRequested {
+                id,
+                summary,
+                reason,
+                why,
+                preview,
+                ..
+            } => {
+                self.card = Some(Card {
+                    id: id.clone(),
+                    summary: summary.clone(),
+                    reason: reason.clone(),
+                    why: why.clone(),
+                    preview: preview.clone(),
+                });
+            }
+            Event::ApprovalResolved { id, .. } => {
+                if self.card.as_ref().is_some_and(|card| &card.id == id) {
+                    self.card = None;
+                }
+            }
             Event::Spend { cost, .. } => match cost {
                 Some(cost) => self.cost += cost,
                 None => self.unpriced += 1,
@@ -422,6 +458,7 @@ impl Chat {
                 }
                 self.busy = false;
                 self.activity = Activity::Idle;
+                self.card = None;
             }
             _ => {}
         }
@@ -477,8 +514,11 @@ pub fn paste(view: &mut View, text: &str) {
             picker.filter.insert(text);
             picker.selected = 0;
         }
-        // A pasted block becomes one line: line breaks turn into spaces.
-        Screen::Chat => view.chat.input.insert(&text.replace(['\r', '\n'], " ")),
+        // A pasted block becomes one line: line breaks turn into spaces. A
+        // paste never answers a question, even one that contains a `y`.
+        Screen::Chat if view.chat.card.is_none() => {
+            view.chat.input.insert(&text.replace(['\r', '\n'], " "));
+        }
         _ => {}
     }
 }
@@ -575,6 +615,20 @@ fn picker_key(picker: &mut Picker, key: KeyEvent, ctrl: bool) -> Leave {
 
 fn chat_key(view: &mut View, key: KeyEvent, ctrl: bool) -> Vec<Request> {
     let chat = &mut view.chat;
+    // A question is on the screen: the keys answer it. Only an explicit `y`
+    // is a yes, so a stray Enter cannot approve anything.
+    if let Some(card) = &chat.card {
+        let approve = match key.code {
+            KeyCode::Char('y' | 'Y') => true,
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => false,
+            _ => return Vec::new(),
+        };
+        return vec![Request::Approval {
+            id: card.id.clone(),
+            approve,
+            note: None,
+        }];
+    }
     match key.code {
         KeyCode::Esc if chat.busy => return vec![Request::Cancel],
         KeyCode::PageUp => chat.scroll += 10,
@@ -1120,6 +1174,75 @@ mod tests {
         type_text(&mut view, "/quit");
         press(&mut view, KeyCode::Enter);
         assert!(view.quit);
+    }
+
+    #[test]
+    fn a_question_takes_the_keys_until_it_is_answered_and_only_y_is_a_yes() {
+        let asked = Event::ApprovalRequested {
+            id: "w1".into(),
+            tool: "write_file".into(),
+            summary: "write /etc/hosts (3 lines)".into(),
+            reason: "to add a host".into(),
+            why: "/etc/hosts is outside Tiphys's own home".into(),
+            class: tiphys_core::policy::Class::System,
+            preview: Some("+10.0.0.5 db".into()),
+        };
+        let answer = |approve| Request::Approval {
+            id: "w1".into(),
+            approve,
+            note: None,
+        };
+
+        let mut view = chatting();
+        type_text(&mut view, "edit the hosts file");
+        press(&mut view, KeyCode::Enter);
+        apply(&mut view, &asked);
+        assert_eq!(
+            view.chat.card.as_ref().unwrap().summary,
+            "write /etc/hosts (3 lines)"
+        );
+
+        // Enter, other letters and a paste answer nothing and type nothing.
+        assert!(press(&mut view, KeyCode::Enter).is_empty());
+        assert!(press(&mut view, KeyCode::Char('x')).is_empty());
+        paste(&mut view, "yes");
+        assert!(view.chat.input.is_empty());
+
+        assert_eq!(press(&mut view, KeyCode::Char('y')), [answer(true)]);
+        assert_eq!(press(&mut view, KeyCode::Char('n')), [answer(false)]);
+        assert_eq!(press(&mut view, KeyCode::Esc), [answer(false)]);
+
+        // The card stays until the host says the question is settled.
+        assert!(view.chat.card.is_some());
+        apply(
+            &mut view,
+            &Event::ApprovalResolved {
+                id: "other".into(),
+                approved: true,
+                note: String::new(),
+            },
+        );
+        assert!(view.chat.card.is_some());
+        apply(
+            &mut view,
+            &Event::ApprovalResolved {
+                id: "w1".into(),
+                approved: true,
+                note: String::new(),
+            },
+        );
+        assert!(view.chat.card.is_none());
+
+        // A turn that ends takes its question with it.
+        apply(&mut view, &asked);
+        apply(
+            &mut view,
+            &Event::TurnFinished {
+                reason: StopReason::Cancelled,
+                error: None,
+            },
+        );
+        assert!(view.chat.card.is_none());
     }
 
     #[test]

@@ -47,3 +47,10 @@
 # [limits]
 # rounds = 40
 # max_tokens = 8192
+
+# What asks before it runs. Reads never ask. Anything outside Tiphys's own
+# home, anything that needs root and any file that usually holds a secret
+# always asks. Changes inside its own home run by default, because the machine
+# exists for the agent; "ask" makes those ask as well.
+# [approvals]
+# change = "run"

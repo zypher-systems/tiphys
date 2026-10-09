@@ -18,6 +18,8 @@ use chrono::Utc;
 use futures_util::StreamExt;
 
 use crate::Result;
+use crate::actionlog::{ActionLog, Gate, Record};
+use crate::approval::{Approver, Ask, Decision};
 use crate::cancel::Cancel;
 use crate::config::Limits;
 use crate::llm::{self, Delta, Message, Provider, Reply, ReplyBuilder, ToolCall};
@@ -25,7 +27,7 @@ use crate::policy::Class;
 use crate::proto::{Event, StopReason};
 use crate::session::Session;
 use crate::spend::{self, Charge, PriceBook};
-use crate::tools::{Output, Registry, ToolCtx};
+use crate::tools::{Action, Output, Registry, ToolCtx};
 
 /// The same call with the same result this many times gets a note.
 const REPEAT_NUDGE: u32 = 3;
@@ -70,6 +72,11 @@ pub struct Agent {
     pub local: bool,
     pub limits: Limits,
     pub cancel: Arc<Cancel>,
+    /// Who is asked before an action that needs a yes.
+    pub approver: Arc<dyn Approver>,
+    /// Whether changes inside the agent's own home ask as well.
+    pub ask_before_change: bool,
+    pub actions: ActionLog,
 }
 
 impl Agent {
@@ -264,7 +271,8 @@ impl Agent {
 
     /// Plans one call, decides whether it may run, runs it, and returns what
     /// goes back to the model. A call that cannot run is not an error of the
-    /// turn: the model is told why and carries on.
+    /// turn: the model is told why and carries on. Whatever happens to the
+    /// call, it is written to the action log.
     async fn deal_with(&mut self, call: &ToolCall, emit: Emit<'_>) -> Result<Output> {
         let planned = self.tools.plan(call, &self.ctx);
         let (summary, reason) = match &planned {
@@ -276,29 +284,32 @@ impl Agent {
             Event::ToolStarted {
                 id: call.id.clone(),
                 tool: call.name.clone(),
-                summary,
-                reason,
+                summary: summary.clone(),
+                reason: reason.clone(),
             },
         )?;
-        let output = match planned {
-            Err(message) => Output::error(message),
-            Ok(planned) => match planned.action.class() {
-                Class::Observe => {
-                    let cancel = self.cancel.clone();
-                    tokio::select! {
-                        output = planned.action.run(&self.ctx) => output,
-                        () = cancel.cancelled() => Output::error("stopped by the owner before it finished"),
-                    }
-                }
-                Class::Never => Output::error(
-                    "refused: this is something Tiphys never does, whoever asks. Do not try another way.",
-                ),
-                Class::Change | Class::System => Output::error(
-                    "not run: this needs the owner's approval, and this version of Tiphys cannot ask for it yet",
-                ),
-            },
-        }
-        .capped();
+        let (class, gate, output) = match planned {
+            Err(message) => (None, Gate::Invalid, Output::error(message)),
+            Ok(planned) => {
+                let verdict = planned.action.verdict();
+                let (gate, output) = self
+                    .judge_and_run(call, planned.action, &summary, &reason, emit)
+                    .await?;
+                (Some(verdict.class), gate, output)
+            }
+        };
+        let output = output.capped();
+        let meta = self.session.meta();
+        self.actions.append(Record {
+            session: meta.id.clone(),
+            audience: meta.audience.clone(),
+            tool: call.name.clone(),
+            class,
+            summary,
+            reason,
+            gate,
+            ok: output.ok,
+        })?;
         self.tell(
             emit,
             Event::ToolFinished {
@@ -308,6 +319,92 @@ impl Agent {
             },
         )?;
         Ok(output)
+    }
+
+    /// Applies the rules to an action and runs it if they, and where needed
+    /// the owner, allow it.
+    async fn judge_and_run(
+        &mut self,
+        call: &ToolCall,
+        action: Box<dyn Action>,
+        summary: &str,
+        reason: &str,
+        emit: Emit<'_>,
+    ) -> Result<(Gate, Output)> {
+        let verdict = action.verdict();
+        let asks = match verdict.class {
+            Class::Never => {
+                let refusal = format!(
+                    "refused: {}. This is something Tiphys never does, whoever asks. Do not try \
+                     another way.",
+                    verdict.why
+                );
+                return Ok((Gate::Refused, Output::error(refusal)));
+            }
+            Class::Observe => false,
+            Class::Change => self.ask_before_change,
+            Class::System => true,
+        };
+        // An action whose record could not be kept does not run.
+        if let Err(e) = self.actions.ready() {
+            let refusal = format!("not run: Tiphys cannot write its action log ({e})");
+            return Ok((Gate::Refused, Output::error(refusal)));
+        }
+        let cancel = self.cancel.clone();
+        let mut gate = Gate::Free;
+        if asks {
+            let ask = Ask {
+                id: call.id.clone(),
+                tool: call.name.clone(),
+                summary: summary.to_string(),
+                reason: reason.to_string(),
+                why: verdict.why,
+                class: verdict.class,
+                preview: action.preview(),
+            };
+            self.tell(
+                emit,
+                Event::ApprovalRequested {
+                    id: ask.id.clone(),
+                    tool: ask.tool.clone(),
+                    summary: ask.summary.clone(),
+                    reason: ask.reason.clone(),
+                    why: ask.why.clone(),
+                    class: ask.class,
+                    preview: ask.preview.clone(),
+                },
+            )?;
+            let approver = self.approver.clone();
+            let decision = tokio::select! {
+                decision = approver.decide(&ask) => decision,
+                () = cancel.cancelled() => Decision::Deny("the owner stopped the turn".into()),
+            };
+            let note = match &decision {
+                Decision::Approve => String::new(),
+                Decision::Deny(note) => note.clone(),
+            };
+            self.tell(
+                emit,
+                Event::ApprovalResolved {
+                    id: ask.id,
+                    approved: decision == Decision::Approve,
+                    note: note.clone(),
+                },
+            )?;
+            if decision != Decision::Approve {
+                let denial = format!(
+                    "not run: the owner did not approve this ({note}). Do not try another way \
+                     to do the same thing; say what you wanted to do and why."
+                );
+                return Ok((Gate::Denied, Output::error(denial)));
+            }
+            gate = Gate::Approved;
+        }
+        let output = tokio::select! {
+            output = action.run(&self.ctx) => output,
+            () = cancel.cancelled() => Output::error("stopped by the owner before it finished"),
+        };
+        Ok((gate, output))
     }
 
     /// Reports an event: to the session's event file if it is durable, then
@@ -329,6 +426,7 @@ fn fingerprint(call: &ToolCall, output: &Output) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::approval::DenyAll;
     use crate::llm::{DeltaStream, Model, ReplayProvider, Role, ToolCallPart};
     use crate::session::Opening;
     use crate::spend::{Rates, Usage};
@@ -380,6 +478,7 @@ mod tests {
         std::fs::create_dir_all(state.join("keys")).unwrap();
         std::fs::write(state.join("keys/work"), "sk-secret-123").unwrap();
         std::fs::write(home.join("hello.txt"), "hello from disk\n").unwrap();
+        let log_home = state.clone();
         let tools = Registry::builtin();
         let session = Session::create(
             &state,
@@ -424,6 +523,9 @@ mod tests {
                     max_tokens: None,
                 },
                 cancel: Arc::new(Cancel::default()),
+                approver: Arc::new(DenyAll),
+                ask_before_change: false,
+                actions: ActionLog::at(&log_home),
             },
             provider: replay,
             events: Arc::default(),
@@ -522,7 +624,7 @@ mod tests {
         let sent = &f.provider.requests()[0];
         assert_eq!(sent.system.as_deref(), Some("You are Tiphys."));
         assert_eq!(sent.model, "vendor/model");
-        assert_eq!(sent.tools.len(), 3);
+        assert_eq!(sent.tools.len(), 5);
     }
 
     #[tokio::test]
@@ -784,5 +886,241 @@ mod tests {
                 (Role::User, "second"),
             ]
         );
+    }
+
+    /// An approver that gives one answer and remembers what it was asked.
+    struct Says {
+        answer: Decision,
+        asked: Mutex<Vec<Ask>>,
+    }
+
+    impl Says {
+        fn new(answer: Decision) -> Arc<Self> {
+            Arc::new(Self {
+                answer,
+                asked: Mutex::default(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Approver for Says {
+        async fn decide(&self, ask: &Ask) -> Decision {
+            self.asked.lock().unwrap().push(ask.clone());
+            self.answer.clone()
+        }
+    }
+
+    fn writes(id: &str, path: &str) -> Vec<Delta> {
+        let arguments =
+            serde_json::json!({"path": path, "content": "written\n", "reason": "to keep a note"});
+        calls(&[(id, "write_file", &arguments.to_string())])
+    }
+
+    /// The gate and outcome of each entry in the action log, in order.
+    fn logged(f: &Fixture) -> Vec<(String, Gate, bool)> {
+        let entries = f.agent.actions.entries().unwrap();
+        entries
+            .into_iter()
+            .map(|e| (e.tool, e.gate, e.ok))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_change_in_the_agents_own_home_runs_without_asking_and_is_logged() {
+        let mut f = fixture(vec![writes("w1", "notes/today.txt"), says("Saved.")]);
+        let turn = f.turn("keep a note").await;
+        assert_eq!(turn.reason, StopReason::Completed);
+        assert_eq!(
+            std::fs::read_to_string(f.home().join("notes/today.txt")).unwrap(),
+            "written\n"
+        );
+        assert!(!f.kinds().iter().any(|kind| kind.starts_with("approval")));
+
+        assert_eq!(logged(&f), [("write_file".to_string(), Gate::Free, true)]);
+        let entry = &f.agent.actions.entries().unwrap()[0];
+        assert_eq!(entry.class, Some(Class::Change));
+        assert_eq!(entry.reason, "to keep a note");
+        assert_eq!(
+            (entry.session.as_str(), entry.audience.as_str()),
+            (f.agent.session.meta().id.as_str(), "terminal")
+        );
+        assert_eq!(f.agent.actions.verify().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn what_asks_is_put_to_the_owner_with_the_reason_and_the_difference() {
+        let mut f = fixture(vec![writes("w1", "notes.txt"), says("Saved.")]);
+        let owner = Says::new(Decision::Approve);
+        f.agent.approver = owner.clone();
+        f.agent.ask_before_change = true;
+        f.turn("keep a note").await;
+
+        let asked = owner.asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(
+            (asked[0].id.as_str(), asked[0].tool.as_str(), asked[0].class),
+            ("w1", "write_file", Class::Change)
+        );
+        assert_eq!(asked[0].reason, "to keep a note");
+        assert!(asked[0].preview.as_ref().unwrap().contains("+written"));
+        assert_eq!(
+            f.kinds(),
+            [
+                "user_message",
+                "spend",
+                "tool_started",
+                "approval_requested",
+                "approval_resolved",
+                "tool_finished",
+                "spend",
+                "assistant_message",
+                "turn_finished"
+            ]
+        );
+        assert!(f.home().join("notes.txt").is_file());
+        assert_eq!(
+            logged(&f),
+            [("write_file".to_string(), Gate::Approved, true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_no_from_the_owner_means_it_does_not_run_and_the_model_is_told() {
+        // A file that usually holds a secret always asks.
+        let mut f = fixture(vec![writes("w1", ".env"), says("Understood.")]);
+        let owner = Says::new(Decision::Deny("not that file".into()));
+        f.agent.approver = owner.clone();
+        let turn = f.turn("save the token").await;
+
+        assert_eq!(turn.reason, StopReason::Completed);
+        assert!(!f.home().join(".env").exists());
+        let result = &results(&f)[0];
+        assert!(
+            result.starts_with("not run: the owner did not approve this (not that file)"),
+            "{result}"
+        );
+        assert_eq!(owner.asked.lock().unwrap()[0].class, Class::System);
+        assert_eq!(
+            logged(&f),
+            [("write_file".to_string(), Gate::Denied, false)]
+        );
+        let resolved = f.events.lock().unwrap().iter().find_map(|e| match e {
+            Event::ApprovalResolved { approved, note, .. } => Some((*approved, note.clone())),
+            _ => None,
+        });
+        assert_eq!(resolved, Some((false, "not that file".into())));
+    }
+
+    #[tokio::test]
+    async fn with_nobody_to_ask_what_needs_a_yes_does_not_run() {
+        let mut f = fixture(vec![writes("w1", ".env"), says("Understood.")]);
+        f.turn("save the token").await;
+        assert!(!f.home().join(".env").exists());
+        assert!(results(&f)[0].contains("nobody is here to approve it"));
+    }
+
+    #[tokio::test]
+    async fn what_the_rules_refuse_is_not_asked_about_and_every_call_is_logged() {
+        let mut f = fixture(vec![
+            calls(&[
+                (
+                    "a",
+                    "write_file",
+                    r#"{"path":"~/.tiphys/config.toml","content":"x"}"#,
+                ),
+                ("b", "read_file", r#"{"path":"~/.tiphys/keys/work"}"#),
+                ("c", "launch_rocket", "{}"),
+                ("d", "read_file", r#"{"path":"hello.txt"}"#),
+                ("e", "read_file", r#"{"path":"missing.txt"}"#),
+            ]),
+            says("Done."),
+        ]);
+        let owner = Says::new(Decision::Approve);
+        f.agent.approver = owner.clone();
+        f.turn("go").await;
+
+        // Not even a willing owner is asked about what is never done.
+        assert!(owner.asked.lock().unwrap().is_empty());
+        assert!(results(&f)[0].starts_with("refused: this is inside Tiphys's own state directory"));
+        assert!(!f.agent.ctx.state.join("config.toml").exists());
+        assert_eq!(
+            logged(&f),
+            [
+                ("write_file".to_string(), Gate::Refused, false),
+                ("read_file".to_string(), Gate::Refused, false),
+                ("launch_rocket".to_string(), Gate::Invalid, false),
+                ("read_file".to_string(), Gate::Free, true),
+                ("read_file".to_string(), Gate::Free, false),
+            ]
+        );
+        let classes: Vec<Option<Class>> = f
+            .agent
+            .actions
+            .entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.class)
+            .collect();
+        assert_eq!(
+            classes,
+            [
+                Some(Class::Never),
+                Some(Class::Never),
+                None,
+                Some(Class::Observe),
+                Some(Class::Observe)
+            ]
+        );
+        assert_eq!(f.agent.actions.verify().unwrap(), 5);
+    }
+
+    #[tokio::test]
+    async fn nothing_runs_when_its_record_cannot_be_kept() {
+        let mut f = fixture(vec![writes("w1", "notes.txt"), says("never reached")]);
+        // The action log's place is taken by a file.
+        std::fs::write(f.agent.ctx.state.join("log"), b"").unwrap();
+        let turn = f.turn("keep a note").await;
+
+        assert!(!f.home().join("notes.txt").exists());
+        // The call was refused, and then the turn failed for want of a record.
+        assert_eq!(turn.reason, StopReason::Failed);
+        assert!(turn.error.unwrap().contains("log"));
+    }
+
+    /// An approver that never answers.
+    struct Silent;
+
+    #[async_trait]
+    impl Approver for Silent {
+        async fn decide(&self, _: &Ask) -> Decision {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_ends_a_turn_that_is_waiting_for_an_answer() {
+        let mut f = fixture(vec![writes("w1", ".env"), says("never reached")]);
+        f.agent.approver = Arc::new(Silent);
+        let cancel = f.agent.cancel.clone();
+        let events = f.events.clone();
+        let turn = f
+            .agent
+            .turn("save the token", &move |event| {
+                if matches!(event, Event::ApprovalRequested { .. }) {
+                    cancel.cancel();
+                }
+                events.lock().unwrap().push(event.clone());
+            })
+            .await;
+
+        assert_eq!(turn.reason, StopReason::Cancelled);
+        assert!(!f.home().join(".env").exists());
+        assert_eq!(
+            logged(&f),
+            [("write_file".to_string(), Gate::Denied, false)]
+        );
+        // The call still has its result, so the session can go on.
+        assert!(results(&f)[0].contains("the owner stopped the turn"));
     }
 }

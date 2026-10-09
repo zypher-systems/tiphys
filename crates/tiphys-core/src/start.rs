@@ -9,9 +9,11 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
+use crate::actionlog::ActionLog;
 use crate::agent::Agent;
+use crate::approval::{Approver, DenyAll};
 use crate::cancel::Cancel;
-use crate::config::{self, Config, Connection};
+use crate::config::{self, Config, Connection, OnChange};
 use crate::llm::{ChatConnect, Connect, Provider, catalog};
 use crate::prompt::{Machine, system_prompt};
 use crate::session::{self, Opening, Session};
@@ -41,10 +43,11 @@ pub struct Start {
     pub audience: String,
 }
 
-/// Builds the agent for a run.
+/// Builds the agent for a run with nobody to ask: what needs a yes does not
+/// run.
 pub async fn agent(home: &Path, start: Start) -> Result<Agent> {
     let user_home = config::user_home()?;
-    agent_for(home, &user_home, start, &ChatConnect).await
+    agent_for(home, &user_home, start, &ChatConnect, Arc::new(DenyAll)).await
 }
 
 /// [`agent`] with the home of the user Tiphys runs as passed in.
@@ -53,6 +56,7 @@ pub async fn agent_for(
     user_home: &Path,
     start: Start,
     connect: &dyn Connect,
+    approver: Arc<dyn Approver>,
 ) -> Result<Agent> {
     let config = config::load_at(home)?;
     let ctx = ToolCtx {
@@ -117,6 +121,9 @@ pub async fn agent_for(
         local: connection.local,
         limits: config.limits,
         cancel: Arc::new(Cancel::default()),
+        approver,
+        ask_before_change: config.approvals.change == OnChange::Ask,
+        actions: ActionLog::at(home),
     })
 }
 
@@ -183,7 +190,14 @@ mod tests {
     }
 
     async fn agent(home: &Path, start: Start) -> Result<Agent> {
-        agent_for(home, &home.join("user"), start, &ChatConnect).await
+        agent_for(
+            home,
+            &home.join("user"),
+            start,
+            &ChatConnect,
+            Arc::new(DenyAll),
+        )
+        .await
     }
 
     fn start() -> Start {
@@ -254,7 +268,7 @@ mod tests {
         );
         assert_eq!(meta.audience, "terminal");
         assert!(agent_a.session.system().starts_with("You are Tiphys"));
-        assert_eq!(agent_a.session.tools().len(), 3);
+        assert_eq!(agent_a.session.tools().len(), 5);
         assert!(agent_a.local);
 
         let chosen = Start {

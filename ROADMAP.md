@@ -19,8 +19,9 @@ with the owner. Until every item on it holds and the release is decided, Tiphys 
 - [x] Agent loop: sessions, events, the tool registry, read-only tools, `tiphys -p`.
 - [x] Terminal app: first-run setup, connections with masked key entry, a model picker, a real
       tool-call check of the chosen model before it is saved, chat.
-- [ ] Actions: the Ubuntu policy, approvals, `write_file`, `edit_file`, `shell`, the action log,
-      `doctor`.
+- [x] File actions: the path rules, approvals with a card in the app, `write_file`, `edit_file`,
+      the action log and `tiphys log`.
+- [ ] Commands: the `shell` tool with its Ubuntu rules, and `doctor`.
 
 Done when: you run `tiphys`, add a connection and its key in the app, ask "how full is the root
 disk? write the answer to ~/disk.txt", and the file appears; a `sudo` request shows an approval

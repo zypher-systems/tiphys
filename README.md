@@ -4,9 +4,10 @@ An **always-on agent for your server**. You install it on a machine of its own, 
 for you: it runs commands, checks on things, does scheduled jobs and reports back. You reach it from
 a terminal app on the server and from chat on your phone.
 
-> **Status: in development, nothing released.** The first milestone (M0) is most of the way there:
-> the terminal app runs, a connection is set up and checked inside it, and Tiphys can read files
-> and look around the machine. It cannot change anything yet, and there is no daemon and no chat.
+> **Status: in development, nothing released.** The first milestone (M0) is nearly there: the
+> terminal app runs, a connection is set up and checked inside it, and Tiphys can read, search,
+> write and edit files, asking before it writes outside its own home. It cannot run commands yet,
+> and there is no daemon and no chat.
 > See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how it fits
 > together and [`DECISIONS.md`](DECISIONS.md) for why.
 
@@ -39,6 +40,8 @@ you choose, and only then saves it.
 - `tiphys -p "..."` runs one turn without the app and prints the answer. `-c` carries on the last
   session.
 - `tiphys sessions` lists sessions. `tiphys spend` shows what today and this month have cost.
+- `tiphys log` lists every tool call and how it came to run or not. `tiphys log verify` checks
+  that no entry has been changed or removed.
 
 State lives in `~/.tiphys`, or wherever `TIPHYS_HOME` points. [`config.example.toml`](config.example.toml)
 shows what can be set by hand.

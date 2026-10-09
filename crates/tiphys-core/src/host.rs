@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::agent::Agent;
+use crate::approval::{Decision, Pending};
 use crate::config;
 use crate::llm::{Connect, Model, Provider, catalog, check};
 use crate::proto::{ConnectionInfo, Draft, Event, Request, SessionInfo, State};
@@ -32,6 +33,8 @@ pub struct Host {
     audience: String,
     connect: Arc<dyn Connect>,
     emit: Sink,
+    /// The questions waiting on this client for a yes or a no.
+    approvals: Arc<Pending>,
     agent: Option<Agent>,
     /// The model list of the connection last tried, kept so that saving the
     /// connection does not have to fetch it again.
@@ -52,6 +55,7 @@ impl Host {
             audience: audience.to_string(),
             connect,
             emit,
+            approvals: Arc::new(Pending::default()),
             agent: None,
             tried: None,
         }
@@ -98,8 +102,15 @@ impl Host {
                 audience: self.audience.clone(),
                 ..Start::default()
             };
-            match start::agent_for(&self.home, &self.user_home, start, self.connect.as_ref()).await
-            {
+            let made = start::agent_for(
+                &self.home,
+                &self.user_home,
+                start,
+                self.connect.as_ref(),
+                self.approvals.clone(),
+            )
+            .await;
+            match made {
                 Ok(agent) => self.agent = Some(agent),
                 Err(e) => {
                     (self.emit)(&Event::Failed {
@@ -114,6 +125,7 @@ impl Host {
             return true;
         };
         let cancel = agent.cancel.clone();
+        let self_approvals = self.approvals.clone();
         let emit = self.emit.clone();
         let turn = agent.turn(text, emit.as_ref());
         tokio::pin!(turn);
@@ -123,6 +135,14 @@ impl Host {
                 _ = &mut turn => return connected,
                 request = requests.recv(), if connected => match request {
                     Some(Request::Cancel) => cancel.cancel(),
+                    Some(Request::Approval { id, approve, note }) => {
+                        let decision = if approve {
+                            Decision::Approve
+                        } else {
+                            Decision::Deny(note.unwrap_or_else(|| "the owner said no".into()))
+                        };
+                        self_approvals.answer(&id, decision);
+                    }
                     Some(other) => waiting.push_back(other),
                     // Nobody is left to read the answer. Stop, and let the
                     // turn finish its bookkeeping.
@@ -140,8 +160,8 @@ impl Host {
             Request::Hello => {}
             // Handled by `run`, which can listen while the turn goes on.
             Request::Prompt { .. } => {}
-            // Nothing is running, so there is nothing to stop.
-            Request::Cancel => return Ok(()),
+            // Nothing is running, so there is nothing to stop or to answer.
+            Request::Cancel | Request::Approval { .. } => return Ok(()),
             Request::NewSession => self.agent = None,
             Request::TryConnection(draft) => {
                 let models = self.provider_for(&draft)?.models().await?;
@@ -622,5 +642,66 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    fn writes_env() -> Vec<Delta> {
+        vec![
+            Delta::ToolCall(ToolCallPart {
+                slot: Some(0),
+                id: "w1".into(),
+                name: "write_file".into(),
+                arguments: r#"{"path":".env","content":"TOKEN=x\n","reason":"to save it"}"#.into(),
+            }),
+            Delta::Done,
+        ]
+    }
+
+    #[tokio::test]
+    async fn an_action_that_asks_waits_for_the_clients_answer() {
+        for approve in [true, false] {
+            let provider = ReplayProvider::new(vec![writes_env(), says("Done.")]);
+            let mut f = fixture(Arc::new(provider));
+            f.send(Request::SaveConnection(draft(None, Some("a"))));
+            f.next().await;
+            f.send(Request::Prompt {
+                text: "save the token".into(),
+            });
+
+            let asked = loop {
+                if let Event::ApprovalRequested {
+                    id, summary, why, ..
+                } = f.next().await
+                {
+                    break (id, summary, why);
+                }
+            };
+            assert_eq!(asked.0, "w1");
+            assert!(
+                asked.1.starts_with("create ") && asked.2.contains("secret"),
+                "{asked:?}"
+            );
+            // An answer to some other question changes nothing.
+            f.send(Request::Approval {
+                id: "other".into(),
+                approve: true,
+                note: None,
+            });
+            let note = (!approve).then(|| "not now".to_string());
+            f.send(Request::Approval {
+                id: "w1".into(),
+                approve,
+                note,
+            });
+
+            let (reason, seen) = f.turn_end().await;
+            assert_eq!(reason, StopReason::Completed);
+            let resolved = seen.iter().find_map(|e| match e {
+                Event::ApprovalResolved { approved, note, .. } => Some((*approved, note.clone())),
+                _ => None,
+            });
+            let expected_note = if approve { "" } else { "not now" };
+            assert_eq!(resolved, Some((approve, expected_note.to_string())));
+            assert_eq!(f.dir.path().join("user/.env").exists(), approve);
+        }
     }
 }

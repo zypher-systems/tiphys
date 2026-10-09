@@ -84,6 +84,27 @@ pub struct Config {
     pub pricing: BTreeMap<String, Rates>,
     /// The bounds on one turn.
     pub limits: Limits,
+    /// What asks before it runs.
+    pub approvals: Approvals,
+}
+
+/// What asks before it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Approvals {
+    /// Changes inside the agent's own home. Anything beyond it always asks.
+    pub change: OnChange,
+}
+
+/// What a change inside the agent's own home does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnChange {
+    /// It runs. The machine exists for the agent.
+    #[default]
+    Run,
+    /// It asks first, like everything else that changes something.
+    Ask,
 }
 
 /// The bounds on one turn.
@@ -362,6 +383,16 @@ mod tests {
         assert_eq!((rates.input, rates.output), (3.0, 15.0));
         assert_eq!((rates.cache_read, rates.cache_write), (Some(0.3), None));
         assert_eq!(config.limits, Limits::default());
+        assert_eq!(config.approvals.change, OnChange::Run);
+    }
+
+    #[test]
+    fn changes_can_be_made_to_ask() {
+        let home = home_with("[approvals]\nchange = \"ask\"\n", "");
+        assert_eq!(
+            load_at(home.path()).unwrap().approvals.change,
+            OnChange::Ask
+        );
     }
 
     #[test]
@@ -414,6 +445,7 @@ mod tests {
             ("[pricing.m]\ninput = 1.0", "output"),
             ("[limits]\nrounds = 0", "at least 1"),
             ("[limits]\nturns = 3", "unknown field"),
+            ("[approvals]\nchange = \"never\"", "unknown variant"),
             ("default_connection = ", "config.toml"),
         ];
         for (text, expected) in cases {

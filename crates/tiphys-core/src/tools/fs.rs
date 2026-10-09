@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 
 use super::{Action, Output, Tool, ToolCtx, parse_args};
 use crate::keys::KEYS_DIR;
-use crate::policy::{Class, read_class};
+use crate::policy::{Verdict, paths};
 
 /// Lines a read returns unless asked for fewer.
 const READ_LINES: u64 = 2000;
@@ -33,19 +33,6 @@ const SEARCH_FILE_BYTES: u64 = 1024 * 1024;
 const SEARCH_LINE_CHARS: usize = 300;
 /// Directories a search does not go into: version control and build output.
 const SEARCH_SKIPS: &[&str] = &[".git", "node_modules", "target"];
-
-/// Where a path the model gave points: `~` is the Tiphys user's home, and a
-/// relative path starts from the working directory.
-fn locate(path: &str, ctx: &ToolCtx) -> PathBuf {
-    let path = path.trim();
-    if path == "~" {
-        ctx.home.clone()
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        ctx.home.join(rest)
-    } else {
-        ctx.cwd.join(path)
-    }
-}
 
 fn failed(path: &Path, error: impl std::fmt::Display) -> Output {
     Output::error(format!("{}: {error}", path.display()))
@@ -69,7 +56,7 @@ struct Read {
     path: PathBuf,
     first: u64,
     lines: u64,
-    class: Class,
+    verdict: Verdict,
 }
 
 impl Tool for ReadFile {
@@ -103,9 +90,9 @@ impl Tool for ReadFile {
             limit: Option<u64>,
         }
         let args: Args = parse_args(args)?;
-        let path = locate(&args.path, ctx);
+        let path = ctx.locate(&args.path);
         Ok(Box::new(Read {
-            class: read_class(&path, &ctx.state),
+            verdict: paths::read(&path, ctx.places()),
             path,
             first: args.offset.unwrap_or(1).max(1),
             lines: args.limit.unwrap_or(READ_LINES).clamp(1, READ_LINES),
@@ -115,8 +102,8 @@ impl Tool for ReadFile {
 
 #[async_trait]
 impl Action for Read {
-    fn class(&self) -> Class {
-        self.class
+    fn verdict(&self) -> Verdict {
+        self.verdict.clone()
     }
 
     fn summary(&self) -> String {
@@ -200,7 +187,7 @@ pub struct ListDir;
 
 struct List {
     path: PathBuf,
-    class: Class,
+    verdict: Verdict,
 }
 
 impl Tool for ListDir {
@@ -230,9 +217,9 @@ impl Tool for ListDir {
             path: String,
         }
         let args: Args = parse_args(args)?;
-        let path = locate(&args.path, ctx);
+        let path = ctx.locate(&args.path);
         Ok(Box::new(List {
-            class: read_class(&path, &ctx.state),
+            verdict: paths::read(&path, ctx.places()),
             path,
         }))
     }
@@ -240,8 +227,8 @@ impl Tool for ListDir {
 
 #[async_trait]
 impl Action for List {
-    fn class(&self) -> Class {
-        self.class
+    fn verdict(&self) -> Verdict {
+        self.verdict.clone()
     }
 
     fn summary(&self) -> String {
@@ -314,7 +301,7 @@ struct Search {
     pattern: Regex,
     files: Option<Regex>,
     keys: PathBuf,
-    class: Class,
+    verdict: Verdict,
 }
 
 impl Tool for SearchFiles {
@@ -360,9 +347,9 @@ impl Tool for SearchFiles {
         if args.pattern.is_empty() && files.is_none() {
             return Err("give a `pattern` to search for, or `files` to find files by name".into());
         }
-        let root = locate(&args.path, ctx);
+        let root = ctx.locate(&args.path);
         Ok(Box::new(Search {
-            class: read_class(&root, &ctx.state),
+            verdict: paths::read(&root, ctx.places()),
             pattern: compile("pattern", &args.pattern)?,
             files,
             keys: ctx.state.join(KEYS_DIR),
@@ -373,8 +360,8 @@ impl Tool for SearchFiles {
 
 #[async_trait]
 impl Action for Search {
-    fn class(&self) -> Class {
-        self.class
+    fn verdict(&self) -> Verdict {
+        self.verdict.clone()
     }
 
     fn summary(&self) -> String {
@@ -489,6 +476,7 @@ fn search(search: &Search) -> Output {
 mod tests {
     use super::*;
     use crate::llm::ToolCall;
+    use crate::policy::Class;
     use crate::tools::Registry;
 
     struct Fixture {
@@ -529,7 +517,7 @@ mod tests {
             arguments: args.to_string(),
         };
         let planned = Registry::builtin().plan(&call, &fixture.ctx).unwrap();
-        let class = planned.action.class();
+        let class = planned.action.verdict().class;
         (class, planned.action.run(&fixture.ctx).await)
     }
 
@@ -634,7 +622,11 @@ mod tests {
                 arguments: args.to_string(),
             };
             let planned = Registry::builtin().plan(&call, &f.ctx).unwrap();
-            assert_eq!(planned.action.class(), Class::Never, "{tool} {args}");
+            assert_eq!(
+                planned.action.verdict().class,
+                Class::Never,
+                "{tool} {args}"
+            );
         }
     }
 

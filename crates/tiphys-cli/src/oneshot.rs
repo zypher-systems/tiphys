@@ -127,6 +127,9 @@ impl Printer {
                 let first = output.lines().next().unwrap_or_default();
                 eprintln!("  ✗ {first}");
             }
+            Event::ApprovalRequested { why, .. } => {
+                eprintln!("  needs approval, and nobody is here to give it: {why}");
+            }
             Event::Notice { text } => {
                 self.end_line();
                 eprintln!("{text}");

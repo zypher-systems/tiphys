@@ -2,6 +2,27 @@
 
 Why, not what. Newest first. Each entry: By / Decision / Chosen vs rejected / Why / Where / Residual risk.
 
+### 2026-10-09: The agent's home is its own; a write anywhere else asks
+- **By:** design, while building the file tools.
+- **Decision:**
+  - A write is Change inside the Tiphys user's home, `/tmp` and `/var/tmp`, and System everywhere else. The System class is defined by reach, not by a list of system directories.
+  - Tiphys's state directory, its binary, its unit and its sudoers file are Never to write. Its state changes only through its own code.
+  - A file that usually holds a secret asks before it is read or written, judged from its name and place alone. The key store is Never to read.
+  - A path is resolved before it is judged, so a rule about a place holds through symlinks and `..`.
+  - `write_file` and `edit_file` work out the whole new content when they are planned. The owner approves a diff of exactly what will be written, and a file that changed while the question was open is left alone.
+  - In the app only `y` approves. Enter, other keys and a paste do nothing.
+- **Chosen vs rejected:**
+  - Rejected listing system directories (`/etc`, `/usr`, ...) as the System class: a list has gaps, and "outside my own home" has none.
+  - Rejected letting a tool write Tiphys's config, even with approval: text from a file or a web page could talk the model into changing the rules it runs under, and the owner would be approving a diff, not a policy.
+  - Rejected showing a secret file's contents in the approval card: the card is an event, and events are kept with the session.
+  - Rejected Enter as yes: it is the key most often pressed by accident.
+- **Why:** The first version of the plan called the third class "changes the system". Writing the rules showed that the useful line is the edge of the agent's own home.
+- **Where:** `tiphys-core/src/policy/paths.rs`, `tools/write.rs`, `approval.rs`, `agent.rs` (`judge_and_run`); the card in `tiphys-tui/src/draw.rs`.
+- **Residual risk:**
+  - A secret is recognised by name. A key in a file called `notes.txt` is read without asking.
+  - What the model itself writes into a secret file is in the transcript, as everything the model says is.
+  - Reads outside home run without asking, so the model provider sees whatever the Tiphys user can read that is not named like a secret.
+
 ### 2026-10-09: One agent per session, no orchestrator
 - **By:** design, at the start.
 - **Decision:** A session has one agent. A scheduled job is a new agent with no history. Handing work to another agent, when it comes, is one tool that runs an external agent CLI and returns its answer.

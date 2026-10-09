@@ -14,7 +14,9 @@ use tiphys_core::spend::dollars;
 use unicode_width::UnicodeWidthStr;
 
 use crate::input::Input;
-use crate::view::{Activity, Chat, Field, Item, Picker, Screen, Setup, Status, ToolState, View};
+use crate::view::{
+    Activity, Card, Chat, Field, Item, Picker, Screen, Setup, Status, ToolState, View,
+};
 use crate::wrap::{fit, wrap};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -335,6 +337,73 @@ fn transcript(chat: &Chat, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+fn asking() -> Style {
+    Style::new().fg(Color::Yellow)
+}
+
+/// The lines of an approval card, at most `rows` of them. What is being
+/// asked always fits; the preview is what gives way.
+fn card_lines(card: &Card, width: usize, rows: usize) -> Vec<Line<'static>> {
+    let room = width.saturating_sub(2).max(1);
+    let bar = || Span::styled("▌ ", asking());
+    let mut lines = vec![Line::from(vec![
+        bar(),
+        Span::styled(
+            "Tiphys asks before it does this",
+            asking().add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    for line in wrap(&card.summary, room) {
+        lines.push(Line::from(vec![bar(), Span::styled(line, bold())]));
+    }
+    if !card.reason.is_empty() {
+        for line in wrap(&format!("Its reason: {}", card.reason), room) {
+            lines.push(Line::from(vec![bar(), Span::raw(line)]));
+        }
+    }
+    if !card.why.is_empty() {
+        for line in wrap(&format!("It asks because {}.", card.why), room) {
+            lines.push(Line::from(vec![bar(), Span::styled(line, dim())]));
+        }
+    }
+    let keys = Line::from(vec![bar(), Span::styled("y approve · n deny", asking())]);
+    if let Some(preview) = &card.preview {
+        // The two header lines of a diff say nothing the summary has not.
+        let preview: Vec<&str> = preview
+            .lines()
+            .filter(|line| !line.starts_with("--- ") && !line.starts_with("+++ "))
+            .collect();
+        // One line is kept for the keys, and one to say what was left out.
+        let space = rows.saturating_sub(lines.len() + 2);
+        let shown = if preview.len() > space {
+            space.saturating_sub(1)
+        } else {
+            preview.len()
+        };
+        if shown > 0 {
+            lines.push(Line::from(vec![bar()]));
+        }
+        for line in &preview[..shown] {
+            let style = match line.chars().next() {
+                Some('+') => Style::new().fg(Color::Green),
+                Some('-') => bad(),
+                _ => dim(),
+            };
+            lines.push(Line::from(vec![
+                bar(),
+                Span::styled(fit(line, room), style),
+            ]));
+        }
+        if shown < preview.len() {
+            let more = format!("… {} more lines", preview.len() - shown);
+            lines.push(Line::from(vec![bar(), Span::styled(more, dim())]));
+        }
+    }
+    lines.truncate(rows.saturating_sub(1));
+    lines.push(keys);
+    lines
+}
+
 fn draw_chat(view: &View, frame: &mut Frame, area: Rect) {
     let chat = &view.chat;
     let [header, body, status, input] = Layout::vertical([
@@ -381,6 +450,29 @@ fn draw_chat(view: &View, frame: &mut Frame, area: Rect) {
         header,
     );
 
+    // An approval card takes as much of the body as it needs, leaving a
+    // couple of lines of the conversation: the owner has to be able to read
+    // what they are agreeing to.
+    let card = chat
+        .card
+        .as_ref()
+        .map(|card| {
+            card_lines(
+                card,
+                width.saturating_sub(2),
+                (body.height as usize).saturating_sub(2).max(2),
+            )
+        })
+        .unwrap_or_default();
+    let [body, asked] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(card.len() as u16)]).areas(body);
+    let asked = Rect {
+        x: asked.x + 1,
+        width: asked.width.saturating_sub(2),
+        ..asked
+    };
+    frame.render_widget(Paragraph::new(card), asked);
+
     // Body: the newest lines that fit, moved up by the scroll.
     let lines = transcript(chat, width.saturating_sub(2));
     let rows = body.height as usize;
@@ -406,7 +498,13 @@ fn draw_chat(view: &View, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(visible), inner);
 
     // Status: what is happening, or what the keys do.
-    let status_line = if chat.busy {
+    let status_line = if chat.card.is_some() {
+        Line::from(vec![
+            Span::styled(format!(" {} ", spinner(view.tick)), asking()),
+            Span::raw("waiting for your answer"),
+            Span::styled("  ctrl+c stops the turn", dim()),
+        ])
+    } else if chat.busy {
         let what = match &chat.activity {
             Activity::Idle | Activity::Waiting => "waiting for the model".to_string(),
             Activity::Thinking => "thinking".to_string(),
@@ -638,6 +736,33 @@ mod tests {
             },
         );
         check("chat_idle", &view);
+    }
+
+    #[test]
+    fn an_action_that_asks_is_drawn_as_a_card_over_the_conversation() {
+        let mut view = chatting();
+        let diff = "--- before\n+++ after\n@@ -1,2 +1,3 @@\n 127.0.0.1 localhost\n-10.0.0.4 db\n+10.0.0.5 db\n+10.0.0.6 cache";
+        apply(
+            &mut view,
+            &Event::ApprovalRequested {
+                id: "w1".into(),
+                tool: "edit_file".into(),
+                summary: "edit /etc/hosts (3 lines)".into(),
+                reason: "to point db at the new address".into(),
+                why: "/etc/hosts is outside Tiphys's own home".into(),
+                class: tiphys_core::policy::Class::System,
+                preview: Some(diff.into()),
+            },
+        );
+        check("chat_asking", &view);
+
+        // A long preview gives way; the question and the keys never do.
+        let long: String = (0..200).map(|n| format!("+line {n}\n")).collect();
+        view.chat.card.as_mut().unwrap().preview = Some(long);
+        let (screen, _) = render(&view, 80, 20);
+        assert!(screen.contains("edit /etc/hosts (3 lines)"), "{screen}");
+        assert!(screen.contains("y approve · n deny"), "{screen}");
+        assert!(screen.contains("more lines"), "{screen}");
     }
 
     #[test]
