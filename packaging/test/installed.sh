@@ -55,6 +55,12 @@ ok "the owner reaches the daemon, and a stranger does not"
 python3 "$root/packaging/test/fake_provider.py" 18080 &
 provider=$!
 trap 'kill "$provider" 2>/dev/null || true' EXIT INT TERM
+tries=0
+until curl -fsS -o /dev/null http://127.0.0.1:18080/v1/models 2>/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 40 ] || fail "the scripted model did not start"
+    sleep 0.5
+done
 sudo -u tiphysd sh -c "cat > $state/config.toml" <<'CONFIG'
 default_connection = "fake"
 
