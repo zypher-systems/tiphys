@@ -38,69 +38,17 @@ beyond the first, more than one owner.
 
 ## Now
 
-**M0: a first conversation.** Built, and run by the owner against a real provider.
+Nothing is in progress. M0 and M1 are done and released as 0.1.0; M2 is next.
 
-- [x] Workspace, config, key store, crash-safe JSONL, CI.
-- [x] Provider layer: Chat Completions with streaming and tool calls, a replay provider, spend.
-- [x] Agent loop: sessions, events, the tool registry, read-only tools, `tiphys -p`.
-- [x] Terminal app: first-run setup, connections with masked key entry, a model picker, a real
-      tool-call check of the chosen model before it is saved, chat.
-- [x] File actions: the path rules, approvals with a card in the app, `write_file`, `edit_file`,
-      the action log and `tiphys log`.
-- [x] Commands: the `shell` tool with its Ubuntu rules, and `tiphys doctor`.
-- [x] A live round trip with a real provider. On 2026-10-09 the owner set up an OpenRouter
-      connection in the app and asked for an overview of the machine: 12 tool calls over two
-      turns, two of them made in one reply, every call priced, three approvals asked and given,
-      and the action log verified afterwards.
-- [ ] The rest of the "done when" below, on the real connection: a file written on request, and a
-      `sudo` request that shows a card.
-- [ ] Captures of a real provider's streams in `crates/tiphys-core/fixtures/chat/`, in place of the
-      ones written by hand. Nothing records a stream yet.
+Found on the first installed server, and not yet dealt with:
 
-Done when: you run `tiphys`, add a connection and its key in the app, ask "how full is the root
-disk? write the answer to ~/disk.txt", and the file appears; a `sudo` request shows an approval
-card; `tiphys log verify` passes.
-
-Known gaps in what is built:
-
-- The shell rules have met their own tests and one real session. In that session 3 of 10 commands
-  asked: two `for` loops and a program not in the table. Real use will find commands that ask and
-  should not, and the reverse.
-- A command the agent runs is the same user as the agent, so the key store is protected from it by
-  the rules alone. M1 gives it a boundary the operating system enforces.
-- A call whose price is not known is not counted toward the spending limit.
-- The conversation is plain text: Markdown is not drawn, and a long diff in an approval card cannot
-  be scrolled.
-
-**M1: the daemon.** Under way. The order is set by what can be done before there is a server to
-install on.
-
-- [x] A host that serves several clients: attach and leave, the conversation replayed to a client
-      that comes late, answers to a client's own questions sent to it alone, the last session
-      picked up after a restart, a turn cut short by a restart closed.
-- [x] The daemon: `tiphys daemon run` behind a Unix socket, one host per audience, clients checked
-      by who they are, a clean stop on SIGTERM. The app and `tiphys -p` are its clients when it is
-      running, and run by themselves when it is not.
-- [x] A worker: the agent's actions, file tools and commands alike, are planned and run in a
-      `tiphys worker` process that the daemon starts with a configured command. Run by hand that
-      is the same user; installed, it is a second user who cannot read the keys or the state.
-- [x] `tiphys daemon install --owner <name>`: the two users, the one sudoers rule between them,
-      the unit, the state directory, and the owner's way to the socket. `--dry-run` shows every
-      command and file first. CI installs it for real on a throwaway Ubuntu machine, runs a turn
-      through the worker, checks that the worker's user cannot read a key, and uninstalls.
-- [x] `tiphys log`, `spend`, `sessions` and `doctor` ask the daemon when there is one, since the
-      owner of an installed Tiphys cannot read its state. `doctor` also starts the worker, to see
-      that it works and who the agent acts as.
-- [x] A daily spending limit, on by default at $5.00 a day: a turn stops when the day's total
-      across every session has reached it. `[spend] daily_usd` changes it; 0 turns it off.
-- [x] `install.sh` for Ubuntu, and a release workflow: a tag on main builds static binaries for
-      x86_64 and arm64 and drafts the release. CI builds the same archives and runs the installer on
-      them on every push. The installer hands over to `tiphys daemon install` once that exists.
-- [ ] The first release, when the owner asks for it, and the install on a real server.
-
-Done when: it is installed on an Ubuntu server from a release, you open the app as yourself, drop
-SSH in the middle of a turn, reconnect, and the turn replays and finishes. That last part already
-holds on a workstation: a terminal killed mid-turn and reopened shows the turn and its end.
+- The owner cannot read the agent's home. `/home/tiphys` is open to its own group only, and the
+  owner is not in it, so a file the agent was asked to write cannot be read back without `sudo`.
+- The app draws Markdown as it arrives: a fenced block shows its backticks.
+- Captures of a real provider's streams are still owed for `crates/tiphys-core/fixtures/chat/`;
+  nothing records a stream.
+- The shell rules have met their own tests and three real sessions. `for` loops and unknown
+  programs ask, which is the commonest interruption so far.
 
 ## Next
 
@@ -132,7 +80,21 @@ Done when: a saved skill runs by name, and a group chat never sees the private c
 
 ## Done
 
-Nothing yet.
+**M1: the daemon** (0.1.0). A daemon behind a Unix socket with the app and `tiphys -p` as its
+clients; a worker that acts as a second user who cannot read the keys or the state;
+`tiphys daemon install`; `install.sh` and a release workflow; the owner's reports through the
+daemon; a daily spending limit.
+Checked on 2026-10-09 on an Ubuntu 24.04 server installed from the release with `install.sh`, with
+a real provider: `doctor` passed with the agent acting as `tiphys`; a turn ran a command and wrote
+a file as that user; a `sudo` request showed an approval card, was approved, and failed as it
+should for a user with no sudo; the SSH connection was killed in the middle of a turn, and on
+reconnecting the turn was shown and then finished; the action log verified.
+
+**M0: a first conversation** (0.1.0). The terminal app with setup and masked key entry, a model
+checked by a real tool call before it is saved, the agent loop and sessions, file and shell tools,
+the rules and approvals, the action log, spend.
+Checked on 2026-10-09 by the owner against a real provider: 12 tool calls over two turns, every
+call priced, three approvals asked and given, the action log verified.
 
 ## Blocked
 
