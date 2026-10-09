@@ -1,6 +1,6 @@
 [package]
-name = "tiphys-cli"
-description = "Tiphys, an always-on agent for your server"
+name = "tiphys-tui"
+description = "The Tiphys terminal app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,13 +12,9 @@ homepage.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "tiphys"
-path = "src/main.rs"
-
 [dependencies]
 tiphys-core.workspace = true
-tiphys-tui.workspace = true
-clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+unicode-width.workspace = true
 tokio.workspace = true
-serde_json.workspace = true

@@ -1,0 +1,20 @@
+
+ Tiphys 0.1.0
+
+ Set up a connection
+
+ A connection is a model endpoint that speaks Chat Completions: OpenRouter,
+ OpenAI, or a server of your own.
+
+   Name      openrouter
+   Address   https://openrouter.ai/api/v1
+ › Key
+   Local     [ ] runs on my own hardware: no cost, and longer to answer
+
+ The key is stored on this machine, in a file only Tiphys can read. It is not
+ shown again and is never passed on a command line.
+
+ ✗ the provider refused the key (401): No auth credentials found
+
+ tab next field · space tick · enter continue · ctrl+c quit
+

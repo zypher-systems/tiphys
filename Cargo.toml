@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tiphys-core", "crates/tiphys-cli"]
+members = ["crates/tiphys-core", "crates/tiphys-tui", "crates/tiphys-cli"]
 default-members = ["crates/tiphys-cli"]
 
 [workspace.package]
@@ -14,6 +14,7 @@ homepage = "https://github.com/zypher-systems/tiphys"
 
 [workspace.dependencies]
 tiphys-core = { path = "crates/tiphys-core", version = "0.1.0" }
+tiphys-tui = { path = "crates/tiphys-tui", version = "0.1.0" }
 
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +34,9 @@ bytes = "1"
 uuid = { version = "1", features = ["v7"] }
 regex = "1"
 walkdir = "2"
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["bracketed-paste"] }
+unicode-width = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

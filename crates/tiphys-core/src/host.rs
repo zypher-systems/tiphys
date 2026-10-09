@@ -208,7 +208,16 @@ impl Host {
         let key = match &draft.key {
             Some(key) => Some(key),
             None => {
-                let env_key = draft.connection.env_key.as_deref();
+                // A connection the owner keys through a variable keeps doing
+                // so while it is edited, though a draft does not carry that.
+                let configured = config::load_at(&self.home)
+                    .ok()
+                    .and_then(|config| config.connections.get(&draft.name)?.env_key.clone());
+                let env_key = draft
+                    .connection
+                    .env_key
+                    .as_deref()
+                    .or(configured.as_deref());
                 stored = keys::resolve(&self.home, &draft.name, env_key)?;
                 stored.as_ref()
             }

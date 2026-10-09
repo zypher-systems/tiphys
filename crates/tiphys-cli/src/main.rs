@@ -85,13 +85,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Some(Command::Sessions) => print_sessions(&home)?,
         Some(Command::Spend) => print_spend(&home)?,
-        // The terminal app is the next thing to be built; until it is, say so
-        // instead of pretending to start.
-        None => println!(
-            "Tiphys {} has no terminal app yet. Its state directory will be {}.",
-            tiphys_core::VERSION,
-            home.display()
-        ),
+        // With nothing asked for, the app.
+        None => tiphys_tui::run(&home, &config::user_home()?)?,
     }
     Ok(ExitCode::SUCCESS)
 }

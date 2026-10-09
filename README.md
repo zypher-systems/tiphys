@@ -4,9 +4,11 @@ An **always-on agent for your server**. You install it on a machine of its own, 
 for you: it runs commands, checks on things, does scheduled jobs and reports back. You reach it from
 a terminal app on the server and from chat on your phone.
 
-> **Status: in development, nothing released.** The first milestone (M0, a first conversation in the
-> terminal app) is being built. See [`ROADMAP.md`](ROADMAP.md) for the order of work,
-> [`design.md`](design.md) for how it fits together and [`DECISIONS.md`](DECISIONS.md) for why.
+> **Status: in development, nothing released.** The first milestone (M0) is most of the way there:
+> the terminal app runs, a connection is set up and checked inside it, and Tiphys can read files
+> and look around the machine. It cannot change anything yet, and there is no daemon and no chat.
+> See [`ROADMAP.md`](ROADMAP.md) for the order of work, [`design.md`](design.md) for how it fits
+> together and [`DECISIONS.md`](DECISIONS.md) for why.
 
 ## What it will be
 
@@ -24,11 +26,22 @@ a terminal app on the server and from chat on your phone.
 
 ## Build from source
 
-Nothing is published yet. Once the workspace lands:
+Nothing is published yet.
 
 ```sh
 cargo build --release --locked -p tiphys-cli && ./target/release/tiphys
 ```
+
+Running `tiphys` opens the app. The first time, it asks for a connection: an address that speaks
+Chat Completions and its key. It lists the connection's models, makes one real tool call on the one
+you choose, and only then saves it.
+
+- `tiphys -p "..."` runs one turn without the app and prints the answer. `-c` carries on the last
+  session.
+- `tiphys sessions` lists sessions. `tiphys spend` shows what today and this month have cost.
+
+State lives in `~/.tiphys`, or wherever `TIPHYS_HOME` points. [`config.example.toml`](config.example.toml)
+shows what can be set by hand.
 
 ## Layout
 

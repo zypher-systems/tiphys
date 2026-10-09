@@ -64,6 +64,13 @@ pub fn home_dir_with(
         .ok_or_else(|| Error::Config(format!("no home directory found; set {HOME_ENV}")))
 }
 
+/// The home of the user Tiphys runs as. Relative paths the model gives start
+/// here.
+pub fn user_home() -> Result<PathBuf> {
+    dirs::home_dir()
+        .ok_or_else(|| Error::Config("the user Tiphys runs as has no home directory".into()))
+}
+
 /// Everything configured, after `settings.toml` is laid over `config.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]

@@ -1,0 +1,20 @@
+ Tiphys · openrouter · vendor/model                                       $0.04
+
+ › how full is the root disk?
+
+ Let me look.
+   · read /proc/mounts  (to find the root disk) ✓
+   · read /nope ✗
+     /nope: No such file or directory
+
+
+
+
+
+
+
+
+
+
+ ⠋ waiting for the model  esc to stop
+ ›

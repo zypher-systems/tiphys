@@ -17,8 +17,8 @@ with the owner. Until every item on it holds and the release is decided, Tiphys 
       The wire fixtures are written by hand; captures from a real provider are still owed, and so
       is the live round trip, which waits for the app.
 - [x] Agent loop: sessions, events, the tool registry, read-only tools, `tiphys -p`.
-- [ ] Terminal app: first-run setup, connections with masked key entry and a live test, model
-      picker, chat.
+- [x] Terminal app: first-run setup, connections with masked key entry, a model picker, a real
+      tool-call check of the chosen model before it is saved, chat.
 - [ ] Actions: the Ubuntu policy, approvals, `write_file`, `edit_file`, `shell`, the action log,
       `doctor`.
 

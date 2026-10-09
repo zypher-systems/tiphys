@@ -43,8 +43,7 @@ pub struct Start {
 
 /// Builds the agent for a run.
 pub async fn agent(home: &Path, start: Start) -> Result<Agent> {
-    let user_home = dirs::home_dir()
-        .ok_or_else(|| Error::Config("the user Tiphys runs as has no home directory".into()))?;
+    let user_home = config::user_home()?;
     agent_for(home, &user_home, start, &ChatConnect).await
 }
 

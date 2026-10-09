@@ -1,0 +1,20 @@
+ Tiphys · openrouter · vendor/model                                       $0.00
+
+
+ Ask for something. Tiphys can read files and look around this machine.
+ /help lists the commands.
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter send · pgup/pgdn scroll · /help commands · ctrl+c quit
+ ›
