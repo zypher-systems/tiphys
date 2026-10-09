@@ -5,30 +5,58 @@
 
 #![forbid(unsafe_code)]
 
+use std::path::Path;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use tiphys_core::{Result, config, spend};
 
 /// An always-on agent for your server.
 #[derive(Debug, Parser)]
 #[command(name = "tiphys", version, about)]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Show what today and this month have cost.
+    Spend,
+}
 
 fn main() -> ExitCode {
-    let Cli {} = Cli::parse();
-    let home = match tiphys_core::config::home_dir() {
-        Ok(home) => home,
+    let cli = Cli::parse();
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tiphys: {e}");
-            return ExitCode::FAILURE;
+            ExitCode::FAILURE
         }
-    };
-    // The terminal app is the next thing to be built; until it is, say so
-    // instead of pretending to start.
-    println!(
-        "Tiphys {} has no terminal app yet. Its state directory will be {}.",
-        tiphys_core::VERSION,
-        home.display()
-    );
-    ExitCode::SUCCESS
+    }
+}
+
+fn run(cli: Cli) -> Result<()> {
+    let home = config::home_dir()?;
+    match cli.command {
+        Some(Command::Spend) => print_spend(&home),
+        // The terminal app is the next thing to be built; until it is, say so
+        // instead of pretending to start.
+        None => {
+            println!(
+                "Tiphys {} has no terminal app yet. Its state directory will be {}.",
+                tiphys_core::VERSION,
+                home.display()
+            );
+            Ok(())
+        }
+    }
+}
+
+fn print_spend(home: &Path) -> Result<()> {
+    let (today, month) = spend::totals(home)?;
+    println!("Today       {today}");
+    println!("This month  {month}");
+    println!("Days and months are counted in UTC.");
+    Ok(())
 }

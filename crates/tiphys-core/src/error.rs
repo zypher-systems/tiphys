@@ -12,6 +12,10 @@ pub enum Error {
     /// A file could not be read or written.
     #[error("io: {0}")]
     Io(String),
+    /// The model provider refused, failed or sent something unusable. The
+    /// message is in words the owner can act on.
+    #[error("{0}")]
+    Provider(String),
 }
 
 impl From<std::io::Error> for Error {

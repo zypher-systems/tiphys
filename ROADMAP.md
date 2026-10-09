@@ -12,9 +12,10 @@ with the owner. Until every item on it holds and the release is decided, Tiphys 
 
 **M0: a first conversation.** The terminal app with the agent running in the same process.
 
-- [ ] Workspace, config, key store, crash-safe JSONL, CI.
-- [ ] Provider layer: Chat Completions with streaming and tool calls, recorded fixtures, a replay
-      provider, spend.
+- [x] Workspace, config, key store, crash-safe JSONL, CI.
+- [x] Provider layer: Chat Completions with streaming and tool calls, a replay provider, spend.
+      The wire fixtures are written by hand; captures from a real provider are still owed, and so
+      is the live round trip, which waits for the app.
 - [ ] Agent loop: sessions, the protocol types, the tool registry, read-only tools, `tiphys -p`.
 - [ ] Terminal app: first-run setup, connections with masked key entry and a live test, model
       picker, chat.

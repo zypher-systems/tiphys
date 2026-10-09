@@ -17,10 +17,12 @@
 # base_url = "https://openrouter.ai/api/v1"
 # model = "vendor/model-id"
 
-# A local server needs no key.
+# A server on your own hardware needs no key. `local = true` says it costs
+# nothing and gives it longer to answer, since it may load a model first.
 # [connections.local]
 # base_url = "http://127.0.0.1:11434/v1"
 # model = "model-id"
+# local = true
 
 # A server that must start with nobody present can take its key from an
 # environment variable instead of the app. Tiphys reads the variable and
@@ -29,3 +31,12 @@
 # base_url = "https://api.openai.com/v1"
 # model = "model-id"
 # env_key = "WORK_API_KEY"
+
+# Prices, in dollars per million tokens, by model id. Tiphys takes prices from
+# a connection's model list where it has them; a price here wins over that,
+# and prices a model that has none. A model with no known price costs $?.??.
+# [pricing."vendor/model-id"]
+# input = 3.0
+# output = 15.0
+# cache_read = 0.3
+# cache_write = 3.75

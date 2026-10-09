@@ -10,8 +10,10 @@ pub mod error;
 pub mod files;
 pub mod jsonl;
 pub mod keys;
+pub mod llm;
 pub mod log;
 pub mod settings;
+pub mod spend;
 
 pub use error::{Error, Result};
 

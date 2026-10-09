@@ -36,6 +36,9 @@ pub fn save_connection(home: &Path, name: &str, connection: &Connection) -> Resu
     if let Some(env_key) = &connection.env_key {
         table["env_key"] = value(env_key);
     }
+    if connection.local {
+        table["local"] = value(true);
+    }
     edit(home, |doc| {
         connections(doc)?.insert(name, Item::Table(table));
         Ok(())
@@ -156,6 +159,7 @@ mod tests {
             base_url: base_url.into(),
             model: model.map(Into::into),
             env_key: None,
+            local: false,
         }
     }
 

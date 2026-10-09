@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::spend::Rates;
 use crate::{Error, Result};
 
 /// The variable that moves the state directory.
@@ -71,6 +72,9 @@ pub struct Config {
     pub default_connection: Option<String>,
     /// Model endpoints, by name.
     pub connections: BTreeMap<String, Connection>,
+    /// The owner's prices by model id, in dollars per million tokens. They
+    /// win over what a provider lists, and price a model that has no listing.
+    pub pricing: BTreeMap<String, Rates>,
 }
 
 /// One model endpoint.
@@ -86,6 +90,10 @@ pub struct Connection {
     /// with nobody present. The stored key is used when this is unset or empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_key: Option<String>,
+    /// The server runs on the owner's own hardware: it costs nothing, and it
+    /// is given longer to answer, since it may have to load a model first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local: bool,
 }
 
 impl Config {
@@ -108,6 +116,13 @@ impl Config {
             connection
                 .validate()
                 .map_err(|e| Error::Config(format!("connection `{name}`: {e}")))?;
+        }
+        for (model, rates) in &self.pricing {
+            if !rates.is_usable() {
+                return Err(Error::Config(format!(
+                    "pricing for `{model}`: a rate must be a number that is not negative"
+                )));
+            }
         }
         if let Some(name) = &self.default_connection
             && !self.connections.contains_key(name)
@@ -233,6 +248,7 @@ mod tests {
             base_url: base_url.into(),
             model: None,
             env_key: None,
+            local: false,
         }
     }
 
@@ -293,6 +309,28 @@ mod tests {
     }
 
     #[test]
+    fn a_local_connection_and_the_owners_prices_are_read() {
+        let home = home_with(
+            r#"
+            [connections.local]
+            base_url = "http://127.0.0.1:11434/v1"
+            local = true
+
+            [pricing."vendor/model"]
+            input = 3.0
+            output = 15.0
+            cache_read = 0.3
+            "#,
+            "",
+        );
+        let config = load_at(home.path()).unwrap();
+        assert!(config.connections["local"].local);
+        let rates = config.pricing["vendor/model"];
+        assert_eq!((rates.input, rates.output), (3.0, 15.0));
+        assert_eq!((rates.cache_read, rates.cache_write), (Some(0.3), None));
+    }
+
+    #[test]
     fn the_only_connection_is_the_default_and_two_need_a_choice() {
         let mut config = Config::default();
         config
@@ -335,6 +373,11 @@ mod tests {
                 "unknown field",
             ),
             ("[connections.a]\nmodel = \"m\"", "base_url"),
+            (
+                "[pricing.\"vendor/model\"]\ninput = -1.0\noutput = 2.0",
+                "not negative",
+            ),
+            ("[pricing.m]\ninput = 1.0", "output"),
             ("default_connection = ", "config.toml"),
         ];
         for (text, expected) in cases {

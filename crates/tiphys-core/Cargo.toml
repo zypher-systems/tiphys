@@ -21,6 +21,12 @@ toml_edit.workspace = true
 dirs.workspace = true
 chrono.workspace = true
 rustix.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

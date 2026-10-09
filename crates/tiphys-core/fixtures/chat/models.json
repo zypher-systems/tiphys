@@ -1,0 +1,30 @@
+{
+  "data": [
+    {
+      "id": "vendor/model",
+      "context_length": 200000,
+      "architecture": { "output_modalities": ["text"] },
+      "supported_parameters": ["tools", "max_tokens"],
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "input_cache_read": "0.0000003"
+      }
+    },
+    {
+      "id": "vendor/free",
+      "context_length": 32768,
+      "pricing": { "prompt": "0", "completion": "0" }
+    },
+    {
+      "id": "router/auto",
+      "pricing": { "prompt": "-1", "completion": "-1" }
+    },
+    { "id": "local-model" },
+    { "id": "vendor/text-embedding-large" },
+    {
+      "id": "vendor/picture-maker",
+      "architecture": { "output_modalities": ["image"] }
+    }
+  ]
+}
