@@ -22,9 +22,13 @@ bin="target/$target/release/tiphys"
 # A release binary has to run on a server with nothing installed for it.
 case "$target" in
 *-musl)
-    if ldd "$bin" >/dev/null 2>&1; then
-        die "$bin is dynamically linked; a release binary must be static"
-    fi
+    # ldd's exit status differs between a static and a static-pie binary, so
+    # it is what ldd says that is read.
+    linkage=$(ldd "$bin" 2>&1 || true)
+    case "$linkage" in
+    *"statically linked"* | *"not a dynamic executable"*) ;;
+    *) die "$bin is dynamically linked; a release binary must be static: $linkage" ;;
+    esac
     ;;
 esac
 
