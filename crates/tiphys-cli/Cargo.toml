@@ -1,0 +1,21 @@
+[package]
+name = "tiphys-cli"
+description = "Tiphys, an always-on agent for your server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tiphys"
+path = "src/main.rs"
+
+[dependencies]
+tiphys-core.workspace = true
+clap.workspace = true

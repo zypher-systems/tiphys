@@ -1,0 +1,31 @@
+# Tiphys configuration: ~/.tiphys/config.toml, or $TIPHYS_HOME/config.toml.
+#
+# This file is yours. Tiphys reads it and never rewrites it. What you choose in
+# the app is saved beside it in settings.toml, and where both set the same
+# value, settings.toml wins.
+#
+# You do not need this file to get started: run `tiphys` and add a connection
+# in the app. Keys are never written here. A key is entered in the app and
+# stored in keys/<connection>, readable only by the Tiphys user.
+
+# The connection a new session uses.
+# default_connection = "openrouter"
+
+# A connection is any endpoint that speaks Chat Completions. `model` is the
+# id the endpoint lists for the model; the app's model picker fills it in.
+# [connections.openrouter]
+# base_url = "https://openrouter.ai/api/v1"
+# model = "vendor/model-id"
+
+# A local server needs no key.
+# [connections.local]
+# base_url = "http://127.0.0.1:11434/v1"
+# model = "model-id"
+
+# A server that must start with nobody present can take its key from an
+# environment variable instead of the app. Tiphys reads the variable and
+# removes it from the environment of every command it runs.
+# [connections.work]
+# base_url = "https://api.openai.com/v1"
+# model = "model-id"
+# env_key = "WORK_API_KEY"

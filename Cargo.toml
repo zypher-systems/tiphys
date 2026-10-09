@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/tiphys-core", "crates/tiphys-cli"]
+default-members = ["crates/tiphys-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+authors = ["Zypher Systems"]
+repository = "https://github.com/zypher-systems/tiphys"
+homepage = "https://github.com/zypher-systems/tiphys"
+
+[workspace.dependencies]
+tiphys-core = { path = "crates/tiphys-core", version = "0.1.0" }
+
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+toml_edit = "0.22"
+dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+rustix = { version = "1", features = ["fs"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
